@@ -4,6 +4,10 @@ Pipeline que recebe uma base de dados (PostgreSQL / e-SUS) e aplica uma
 série de migrations. **Cada migration é atômica**: roda por completo ou
 faz rollback, deixando o banco em estado seguro.
 
+Ver [`GUIDELINE.md`](GUIDELINE.md) para a diretriz de anonimização por dado
+sensível e [`docs/mapeamento_colunas.tsv`](docs/mapeamento_colunas.tsv) para
+o inventário de tabelas/colunas do Data Warehouse.
+
 ## Estrutura
 
 ```
