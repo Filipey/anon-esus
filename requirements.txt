@@ -1,0 +1,9 @@
+cpf-generator
+alembic
+python-dotenv
+sqlalchemy
+psycopg2-binary
+
+# testes
+pytest
+testing.postgresql
