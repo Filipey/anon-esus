@@ -17,6 +17,9 @@ scripts/
   01_anon_cpf.py                  # migration: anonimiza todos os CPFs
   02_anon_unidade_saude.py        # migration: nomes de unidades -> genéricos
   03_anon_email.py                # migration: e-mails -> termo genérico
+  04_anon_datas_cidadao.py        # migration: dia de nascimento + datas de registro
+  05_anon_profissional.py         # migration: nomes/registros de profissionais
+  06_anon_endereco.py             # migration: endereços -> outro do mesmo município
   pipeline_logging.py             # logging centralizado (arquivo + console)
   tests/
     conftest.py                   # fixture `pg_engine`: Postgres efêmero
@@ -24,6 +27,9 @@ scripts/
     test_01_anon_cpf.py           # testes da migration 01
     test_02_anon_unidade_saude.py # testes da migration 02
     test_03_anon_email.py         # testes da migration 03
+    test_04_anon_datas_cidadao.py # testes da migration 04
+    test_05_anon_profissional.py  # testes da migration 05
+    test_06_anon_endereco.py      # testes da migration 06
 logs/                             # arquivos de log gerados a cada execução
 ```
 
@@ -157,3 +163,43 @@ Nulos e strings vazias são preservados.
 
 Colunas declaradas em `EMAIL_COLUMNS` no topo de
 `scripts/03_anon_email.py` (ajuste para o schema da sua base).
+
+## Migration 04 — Datas de nascimento e registros
+
+Substitui o dia da data de nascimento por um dia válido do mesmo mês/ano,
+determinístico por cidadão (`nu_cpf_cidadao`). As datas de atendimento ou
+registro listadas na mesma tabela são deslocadas pelo mesmo delta em dias,
+preservando o intervalo entre nascimento e atendimento.
+
+Linhas sem CPF ou sem data de nascimento são preservadas. As tabelas/colunas
+são declaradas em `DATE_TABLES` no topo de
+`scripts/04_anon_datas_cidadao.py`.
+
+## Migration 05 — Profissionais
+
+Substitui nomes de profissionais por nomes fictícios com sobrenome `Teste` e
+registros profissionais por `99999`, preservando categoria profissional e
+demais chaves/códigos. O CNS profissional (`nu_cns`) segue pendente porque
+exige uma regra própria de geração/validação de CNS, diferente de CPF.
+
+Colunas declaradas em `NAME_COLUMNS` e `REGISTRATION_COLUMNS` no topo de
+`scripts/05_anon_profissional.py`.
+
+## Migration 06 — Endereços de cidadãos
+
+Substitui o endereço completo por outro endereço já existente na mesma tabela
+e no mesmo município. A migration troca o conjunto de campos de uma vez
+(bairro, complemento, logradouro, referência, CEP e número), evitando montar
+endereços artificiais. Tabelas sem coluna de município reconhecida são
+puladas com aviso.
+
+Tabelas/colunas declaradas em `ADDRESS_TABLES` no topo de
+`scripts/06_anon_endereco.py`.
+
+## Lacunas ainda não automatizadas
+
+Alguns itens do guideline continuam sem migration porque exigem regra de
+anonimização ainda não definida ou inventário concreto de tabelas/colunas:
+IPs, documentos/anexos/PDFs, logs de acesso, textos livres via NER, dados
+antropométricos extremos, doenças raras/genéticas e campos classificados no
+TSV como "Sem categoria na guideline".
