@@ -1,4 +1,5 @@
 cpf-generator
+Faker
 alembic
 python-dotenv
 sqlalchemy
