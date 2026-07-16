@@ -1,6 +1,5 @@
 # Auditoria do schema real
 
-Relatorio gerado automaticamente por `scripts/audit_schema.py`.
 O script le apenas metadados de tabelas/colunas; nao le valores de celulas.
 
 - Tabelas inspecionadas: 1154

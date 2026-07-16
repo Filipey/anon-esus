@@ -43,8 +43,33 @@ class EmailColumn:
 # schema real da sua base. Colunas inexistentes são apenas puladas.
 # ---------------------------------------------------------------------------
 EMAIL_COLUMNS: list[EmailColumn] = [
-    EmailColumn("public", "tb_cidadao", "no_email"),
-    EmailColumn("public", "tb_pessoa_fisica", "no_email"),
+    EmailColumn("public", "ta_agend_compartilhado", "ds_email_prof_participante"),
+    EmailColumn("public", "ta_cidadao", "ds_email"),
+    EmailColumn("public", "ta_credencial_integracao", "ds_email"),
+    EmailColumn("public", "ta_prof", "ds_email"),
+    EmailColumn("public", "ta_servidor_smtp", "ds_email"),
+    EmailColumn("public", "ta_sistema_externo", "ds_email"),
+    EmailColumn("public", "ta_unidade_saude", "ds_email"),
+    EmailColumn("public", "tb_cds_aval_elegibilidade", "ds_email_cidadao"),
+    EmailColumn("public", "tb_cds_cad_individual", "ds_email_cidadao"),
+    EmailColumn("public", "tb_cidadao", "ds_email"),
+    EmailColumn("public", "tb_credencial_integracao", "ds_email"),
+    EmailColumn("public", "tb_dado_recebido_info_instalac", "ds_email"),
+    EmailColumn("public", "tb_dsei", "ds_email"),
+    EmailColumn("public", "tb_dsei", "ds_email_chefe"),
+    EmailColumn("public", "tb_fat_avaliacao_elegibilidade", "no_email"),
+    EmailColumn("public", "tb_fat_cad_individual", "no_email"),
+    EmailColumn("public", "tb_polo_base", "ds_email"),
+    EmailColumn("public", "tb_polo_base", "ds_email_chefe"),
+    EmailColumn("public", "tb_prof", "ds_email"),
+    EmailColumn("public", "tb_servidor_smtp", "ds_email"),
+    EmailColumn("public", "tb_sistema_externo", "ds_email"),
+    EmailColumn("public", "tb_unidade_saude", "ds_email"),
+    EmailColumn("public", "tl_cds_aval_elegibilidade", "ds_email_cidadao"),
+    EmailColumn("public", "tl_cds_cad_individual", "ds_email_cidadao"),
+    EmailColumn("public", "tl_cidadao", "ds_email"),
+    EmailColumn("public", "tl_prof", "ds_email"),
+    EmailColumn("public", "tl_unidade_saude", "ds_email"),
 ]
 
 # Termo genérico que substitui todos os e-mails.

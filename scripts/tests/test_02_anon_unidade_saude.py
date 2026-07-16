@@ -35,8 +35,8 @@ def _seed(engine):
         )
         c.execute(
             text(
-                "CREATE TABLE public.tb_estabelecimento "
-                "(co_seq serial PRIMARY KEY, no_estabelecimento text)"
+                "CREATE TABLE public.tb_dim_unidade_saude "
+                "(co_seq serial PRIMARY KEY, no_unidade_saude text, co_dim_unidade_saude int)"
             )
         )
         c.execute(
@@ -46,9 +46,11 @@ def _seed(engine):
             ),
             {"a": U_A, "b": U_B, "c": U_C},
         )
-        # mesmo nome (Posto Alvorada) referenciado em outra tabela.
         c.execute(
-            text("INSERT INTO public.tb_estabelecimento (no_estabelecimento) VALUES (:b)"),
+            text(
+                "INSERT INTO public.tb_dim_unidade_saude "
+                "(no_unidade_saude, co_dim_unidade_saude) VALUES (:b, 10)"
+            ),
             {"b": U_B},
         )
 
@@ -58,19 +60,19 @@ def _values(engine):
         unidades = c.execute(
             text("SELECT no_unidade_saude FROM public.tb_unidade_saude ORDER BY co_seq")
         ).scalars().all()
-        estab = c.execute(
-            text("SELECT no_estabelecimento FROM public.tb_estabelecimento")
-        ).scalar()
-    return unidades, estab
+        dim = c.execute(
+            text("SELECT no_unidade_saude, co_dim_unidade_saude FROM public.tb_dim_unidade_saude")
+        ).one()
+    return unidades, dim
 
 
 def test_substitui_por_denominacao_generica(pg_engine):
     _seed(pg_engine)
     m.run(pg_engine)
-    unidades, estab = _values(pg_engine)
+    unidades, dim = _values(pg_engine)
 
     originais = {U_A, U_B, U_C}
-    presentes = {v for v in unidades if v is not None} | {estab}
+    presentes = {v for v in unidades if v is not None} | {dim[0]}
     assert presentes.isdisjoint(originais), "algum nome original sobreviveu"
     for v in presentes:
         assert _GENERICO.match(v), f"formato inesperado: {v}"
@@ -79,9 +81,10 @@ def test_substitui_por_denominacao_generica(pg_engine):
 def test_consistente_entre_tabelas(pg_engine):
     _seed(pg_engine)
     m.run(pg_engine)
-    unidades, estab = _values(pg_engine)
-    # U_B em tb_unidade_saude (índice 1) e em tb_estabelecimento -> mesmo rótulo.
-    assert unidades[1] == estab
+    unidades, dim = _values(pg_engine)
+    # U_B em tb_unidade_saude (índice 1) e em tb_dim_unidade_saude -> mesmo rótulo.
+    assert unidades[1] == dim[0]
+    assert dim[1] == 10
 
 
 def test_numeracao_deterministica(pg_engine):
@@ -146,8 +149,8 @@ def test_atomicidade_rollback_em_falha(pg_engine, monkeypatch):
     with pytest.raises(Exception):
         m.run(pg_engine)
 
-    unidades, estab = _values(pg_engine)
+    unidades, dim = _values(pg_engine)
     assert unidades[0] == U_A
     assert unidades[1] == U_B
     assert unidades[2] == U_C
-    assert estab == U_B
+    assert dim[0] == U_B

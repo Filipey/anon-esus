@@ -45,8 +45,10 @@ class NameColumn:
 # schema real da sua base. Colunas inexistentes são apenas puladas.
 # ---------------------------------------------------------------------------
 NAME_COLUMNS: list[NameColumn] = [
+    NameColumn("public", "ta_unidade_saude", "no_unidade_saude"),
     NameColumn("public", "tb_unidade_saude", "no_unidade_saude"),
-    NameColumn("public", "tb_estabelecimento", "no_estabelecimento"),
+    NameColumn("public", "tb_dim_unidade_saude", "no_unidade_saude"),
+    NameColumn("public", "tl_unidade_saude", "no_unidade_saude"),
 ]
 
 GENERIC_TEMPLATE = "Unidade de Saúde {n}"

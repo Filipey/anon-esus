@@ -41,8 +41,8 @@ def _seed(engine):
         )
         c.execute(
             text(
-                "CREATE TABLE public.tb_pessoa_fisica "
-                "(co_seq serial PRIMARY KEY, nu_cpf text)"
+                "CREATE TABLE public.tb_fat_atendimento_individual "
+                "(co_seq serial PRIMARY KEY, nu_cpf_cidadao text)"
             )
         )
         # cidadão A (pontuado) + responsável B; cidadão C com zero à esquerda;
@@ -60,8 +60,11 @@ def _seed(engine):
             {"a": CPF_A_RAW},
         )
         c.execute(
-            text("INSERT INTO public.tb_pessoa_fisica (nu_cpf) VALUES (:b)"),
-            {"b": CPF_B},
+            text(
+                "INSERT INTO public.tb_fat_atendimento_individual "
+                "(nu_cpf_cidadao) VALUES (:a)"
+            ),
+            {"a": CPF_A_RAW},
         )
 
 
@@ -71,33 +74,36 @@ def _all_values(engine):
             text("SELECT nu_cpf, nu_cpf_responsavel FROM public.tb_cidadao ORDER BY co_seq")
         ).all()
         prof = c.execute(text("SELECT nu_cpf FROM public.tb_prof")).scalar()
-        pf = c.execute(text("SELECT nu_cpf FROM public.tb_pessoa_fisica")).scalar()
-    return cidadao, prof, pf
+        fat = c.execute(
+            text("SELECT nu_cpf_cidadao FROM public.tb_fat_atendimento_individual")
+        ).scalar()
+    return cidadao, prof, fat
 
 
 def test_anonimiza_todos_os_cpfs(pg_engine):
     _seed(pg_engine)
     m.run(pg_engine)
-    cidadao, prof, pf = _all_values(pg_engine)
+    cidadao, prof, fat = _all_values(pg_engine)
 
     originais = {CPF_A, CPF_A_RAW, CPF_B, CPF_C}
-    presentes = {cidadao[0][0], cidadao[0][1], cidadao[1][0], prof, pf}
+    presentes = {cidadao[0][0], cidadao[0][1], cidadao[1][0], prof, fat}
     assert presentes.isdisjoint(originais), "algum CPF original sobreviveu"
 
 
 def test_todos_os_novos_sao_validos(pg_engine):
     _seed(pg_engine)
     m.run(pg_engine)
-    cidadao, prof, pf = _all_values(pg_engine)
-    for valor in [cidadao[0][0], cidadao[0][1], cidadao[1][0], prof, pf]:
+    cidadao, prof, fat = _all_values(pg_engine)
+    for valor in [cidadao[0][0], cidadao[0][1], cidadao[1][0], prof, fat]:
         assert CPF.validate(_DIGITS.sub("", valor)), f"CPF inválido gerado: {valor}"
 
 
 def test_mapeamento_deterministico_entre_tabelas(pg_engine):
     _seed(pg_engine)
     m.run(pg_engine)
-    cidadao, prof, _ = _all_values(pg_engine)
+    cidadao, prof, fat = _all_values(pg_engine)
     assert _DIGITS.sub("", cidadao[0][0]) == _DIGITS.sub("", prof)
+    assert _DIGITS.sub("", cidadao[0][0]) == _DIGITS.sub("", fat)
 
 
 def test_preserva_formato(pg_engine):
@@ -150,9 +156,9 @@ def test_atomicidade_rollback_em_falha(pg_engine, monkeypatch):
         m.run(pg_engine)
 
     # Banco deve estar idêntico ao estado inicial.
-    cidadao, prof, pf = _all_values(pg_engine)
+    cidadao, prof, fat = _all_values(pg_engine)
     assert cidadao[0][0] == CPF_A
     assert cidadao[0][1] == CPF_B
     assert cidadao[1][0] == CPF_C
     assert prof == CPF_A_RAW
-    assert pf == CPF_B
+    assert fat == CPF_A_RAW
