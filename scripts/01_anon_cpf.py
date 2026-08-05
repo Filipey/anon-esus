@@ -14,6 +14,17 @@ Características:
 As colunas a anonimizar são declaradas explicitamente em `CPF_COLUMNS`.
 Antes de aplicar, o script valida que cada coluna existe; entradas
 inexistentes são puladas com aviso (não abortam a migration).
+
+**Exclusão deliberada — login continua funcionando.** `tb_usuario.ds_login`
+(e `ta_usuario.ds_login`) guardam uma cópia do CPF, gravada na criação da
+conta e nunca recalculada a partir de `nu_cpf` em tempo real — confirmado
+por comparação direta contra `tb_prof.nu_cpf` (100% de igualdade em todos
+os pares profissional+usuário auditados). Essas colunas NUNCA devem entrar
+em `CPF_COLUMNS`: fazer isso anonimizaria o CPF usado pra logar, mas
+deixaria a senha (hash, não é CPF) intacta — quebrando o login de todos os
+profissionais sem necessidade, já que login não depende de `nu_cpf`. A
+constante `PRESERVE_FOR_LOGIN` documenta isso e `run()` recusa a rodar se
+alguma delas aparecer em `CPF_COLUMNS` por engano.
 """
 
 from __future__ import annotations
@@ -141,6 +152,16 @@ CPF_COLUMNS: list[CpfColumn] = [
     CpfColumn("public", "tl_prof_grupo_ativ_col", "nu_cpf"),
 ]
 
+# ---------------------------------------------------------------------------
+# Colunas que guardam CPF mas NUNCA devem ser anonimizadas: sao o login do
+# profissional (ver docstring do modulo). Servem so como guarda de
+# seguranca contra inclusao acidental em CPF_COLUMNS no futuro.
+# ---------------------------------------------------------------------------
+PRESERVE_FOR_LOGIN: list[CpfColumn] = [
+    CpfColumn("public", "ta_usuario", "ds_login"),
+    CpfColumn("public", "tb_usuario", "ds_login"),
+]
+
 
 _NON_DIGITS = re.compile(r"\D")
 
@@ -197,6 +218,15 @@ def _collect_raw_values(conn: Connection, col: CpfColumn) -> set[str]:
 
 def run(engine: Engine) -> None:
     """Executa a migration de forma atômica."""
+    conflitos = set(CPF_COLUMNS) & set(PRESERVE_FOR_LOGIN)
+    if conflitos:
+        nomes = ", ".join(sorted(c.qualified for c in conflitos))
+        raise RuntimeError(
+            f"CPF_COLUMNS inclui coluna(s) reservada(s) para login (PRESERVE_FOR_LOGIN): "
+            f"{nomes}. Remova de CPF_COLUMNS - anonimizar essas colunas quebra o login "
+            f"dos profissionais."
+        )
+
     log.info("iniciando anonimização de CPFs...")
 
     with engine.begin() as conn:

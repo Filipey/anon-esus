@@ -122,6 +122,19 @@ def test_nulls_permanecem_nulos(pg_engine):
     assert cidadao[2][0] is None and cidadao[2][1] is None  # 3ª linha toda nula
 
 
+def test_recusa_rodar_se_coluna_de_login_estiver_em_cpf_columns(pg_engine, monkeypatch):
+    """Guarda de seguranca: anonimizar tb_usuario.ds_login quebraria login
+    de todos os profissionais (ds_login = CPF, confirmado no schema real)."""
+    monkeypatch.setattr(
+        m,
+        "CPF_COLUMNS",
+        list(m.CPF_COLUMNS) + [m.CpfColumn("public", "tb_usuario", "ds_login")],
+    )
+
+    with pytest.raises(RuntimeError, match="PRESERVE_FOR_LOGIN"):
+        m.run(pg_engine)
+
+
 def test_atomicidade_rollback_em_falha(pg_engine, monkeypatch):
     """Se uma coluna-alvo falhar no meio, NADA é alterado (rollback)."""
     _seed(pg_engine)
