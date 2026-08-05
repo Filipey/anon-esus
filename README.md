@@ -36,14 +36,19 @@ idoso etc.).
 
 ## Estado atual
 
-- Schema operacional: CPF, nome de unidade de saúde e e-mail já têm
-  migration implementada (`scripts/01_anon_cpf.py`,
-  `02_anon_unidade_saude.py`, `03_anon_email.py`).
-- Schema do Data Warehouse: mapeamento de colunas sensíveis concluído para
-  Fatos e Dimensões (exceto Vacinação e Zika/Microcefalia, bloqueadas por
-  falta de documentação de estrutura); migrations para essa camada ainda
-  não implementadas.
-- Texto livre (NER) e dado antropométrico extremo (differential privacy)
-  são as duas frentes de pesquisa em aberto — ver a seção "Próximos
-  Passos" do `PIPELINE.md` e "Cobertura de texto livre" do
-  `docs/catalogo_dw_tabelas.md`.
+- 11 migrations implementadas (`scripts/01_anon_cpf.py` até
+  `11_anon_identificadores_diversos.py`), cobrindo schema operacional e
+  Data Warehouse: CPF, CNS (hash provisório), nome (cidadão e
+  profissional), unidade de saúde (nome e CNES), e-mail (pessoal e
+  institucional), endereço, data de nascimento/registro, dado
+  antropométrico (hash provisório), documentos/anexos, e identificadores
+  diversos (prontuário, telefone, NIS, naturalização, óbito/DO,
+  identificação mista). A lista de colunas de cada migration é conferida
+  contra o schema físico real via `scripts/audit_schema.py`
+  (`docs/auditoria_schema.md`).
+- **Fase 2, ainda fora do escopo desta pipeline** (decisão explícita):
+  texto livre via NER, differential privacy real para dado antropométrico
+  extremo, geração sintética de doenças raras/dados genéticos, e as
+  regras de ciclo de vida/perfis (população sintética).
+- **Pendente de scoping**: IP e log de acesso — a auditoria real ainda
+  não tem categoria própria para essas colunas.
