@@ -98,6 +98,54 @@ def test_linha_sem_endereco_permanece_igual(pg_engine):
     assert _address(after[5]) == (None, None, None, None, None, None)
 
 
+def test_numero_da_casa_troca_junto_com_o_resto_do_endereco(pg_engine):
+    """nu_numero/st_sem_numero precisam fazer parte do mesmo conjunto
+    trocado atomicamente - senao o numero original sobrevive junto com
+    rua/bairro de outro endereco (o "Frankenstein" que a migration
+    existe para evitar)."""
+    with pg_engine.begin() as c:
+        c.execute(text("CREATE SCHEMA IF NOT EXISTS public"))
+        c.execute(
+            text(
+                "CREATE TABLE public.tb_cidadao "
+                "("
+                "co_seq serial PRIMARY KEY, "
+                "co_dim_municipio int, "
+                "ds_cep text, ds_complemento text, ds_logradouro text, "
+                "ds_ponto_referencia text, no_bairro text, no_bairro_filtro text, "
+                "nu_numero text, st_sem_numero int"
+                ")"
+            )
+        )
+        c.execute(
+            text(
+                "INSERT INTO public.tb_cidadao "
+                "(co_dim_municipio, ds_cep, ds_complemento, ds_logradouro, "
+                "ds_ponto_referencia, no_bairro, no_bairro_filtro, nu_numero, st_sem_numero) "
+                "VALUES "
+                "(1, '11111-111', 'Apto 1', 'Rua A', 'Padaria', 'Centro', 'centro', '10', 0), "
+                "(1, '22222-222', 'Casa', 'Rua B', 'Escola', 'Norte', 'norte', '20', 0)"
+            )
+        )
+
+    m.run(pg_engine)
+
+    with pg_engine.connect() as c:
+        rows = c.execute(
+            text(
+                "SELECT ds_logradouro, nu_numero FROM public.tb_cidadao ORDER BY co_seq"
+            )
+        ).all()
+
+    # Cada linha recebeu o par (logradouro, numero) de UMA candidata real,
+    # nao a rua de uma linha com o numero da outra.
+    valid_pairs = {("Rua A", "10"), ("Rua B", "20")}
+    for row in rows:
+        assert (row.ds_logradouro, row.nu_numero) in valid_pairs
+    assert (rows[0].ds_logradouro, rows[0].nu_numero) != ("Rua A", "10")
+    assert (rows[1].ds_logradouro, rows[1].nu_numero) != ("Rua B", "20")
+
+
 def test_atomicidade_rollback_em_falha(pg_engine, monkeypatch):
     _seed(pg_engine)
 
