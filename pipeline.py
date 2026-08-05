@@ -17,6 +17,13 @@ Convenção:
 
 A pipeline para na primeira migration cujo teste falhe ou cuja aplicação
 falhe; como cada migration é atômica, o banco permanece consistente.
+
+Auditoria: antes de aplicar qualquer migration, `scripts/pipeline_report.py`
+tira uma "foto" (linhas totais, não-nulos, checksum agregado) de cada
+coluna/tabela declarada nas migrations. Depois da execução (com sucesso ou
+não), tira a foto de novo e escreve um relatório JSON ao lado do log de
+texto (`logs/pipeline_<timestamp>_auditoria.json`), mostrando quais
+colunas de fato tiveram conteúdo alterado — sem nunca expor um valor real.
 """
 
 from __future__ import annotations
@@ -24,6 +31,7 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
 
@@ -31,6 +39,7 @@ ROOT = Path(__file__).resolve().parent
 SCRIPTS_DIR = ROOT / "scripts"
 TESTS_DIR = SCRIPTS_DIR / "tests"
 CONNECT_MODULE = "00_connect_db.py"
+REPORT_MODULE = "pipeline_report.py"
 
 # `scripts/` no path para que pipeline_logging (e as migrations) importem.
 if str(SCRIPTS_DIR) not in sys.path:
@@ -83,24 +92,7 @@ def _run_tests(test_path: Path) -> bool:
     return result.returncode == 0
 
 
-def main() -> int:
-    log_file = setup_file_logging()
-    log.info("=== Pipeline de migrations ===")
-
-    migrations = _discover_migrations()
-    if not migrations:
-        log.info("Nenhuma migration encontrada.")
-        return 0
-
-    # Conexão com o banco real só é estabelecida depois de descobrir as
-    # migrations; cada migration é testada logo antes de ser aplicada.
-    try:
-        connect = _load_module(SCRIPTS_DIR / CONNECT_MODULE)
-        engine = connect.engine
-    except Exception:
-        log.exception("Falha ao estabelecer a conexão com o banco. Abortando.")
-        return 1
-
+def _run_migrations(migrations: list[Path], engine) -> int:
     log.info("%d migration(s) a aplicar.", len(migrations))
     for path in migrations:
         log.info("--> %s", path.name)
@@ -130,9 +122,78 @@ def main() -> int:
             return 1
         log.info("%s aplicada com sucesso.", path.name)
 
-    log.info("=== Pipeline concluída com sucesso ===")
-    log.info("Log completo em %s", log_file)
     return 0
+
+
+def _write_audit_report(engine, log_file: Path, snapshot_before: dict, started_at: datetime) -> None:
+    """Tira a foto 'depois' e escreve o relatório de auditoria (JSON) ao
+    lado do log de texto. Roda mesmo se a pipeline falhou no meio, para
+    documentar o que já tinha sido alterado até ali."""
+    try:
+        report_module = _load_module(SCRIPTS_DIR / REPORT_MODULE)
+    except Exception:
+        log.exception("falha ao carregar %s — relatório de auditoria não gerado.", REPORT_MODULE)
+        return
+
+    log.info("tirando foto do banco depois da execução (auditoria)...")
+    try:
+        snapshot_after = report_module.build_snapshot(engine)
+        finished_at = datetime.now(timezone.utc)
+        report = report_module.build_report(snapshot_before, snapshot_after, started_at, finished_at)
+    except Exception:
+        log.exception("falha ao montar o relatório de auditoria")
+        return
+
+    report_path = log_file.with_name(log_file.stem + "_auditoria.json")
+    try:
+        report_module.write_report(report, report_path)
+    except Exception:
+        log.exception("falha ao escrever o relatório de auditoria em %s", report_path)
+        return
+
+    report_module.log_summary(report)
+    log.info("Relatório de auditoria (quantitativo/qualitativo) em %s", report_path)
+
+
+def main() -> int:
+    log_file = setup_file_logging()
+    log.info("=== Pipeline de migrations ===")
+
+    migrations = _discover_migrations()
+    if not migrations:
+        log.info("Nenhuma migration encontrada.")
+        return 0
+
+    # Conexão com o banco real só é estabelecida depois de descobrir as
+    # migrations; cada migration é testada logo antes de ser aplicada.
+    try:
+        connect = _load_module(SCRIPTS_DIR / CONNECT_MODULE)
+        engine = connect.engine
+    except Exception:
+        log.exception("Falha ao estabelecer a conexão com o banco. Abortando.")
+        return 1
+
+    started_at = datetime.now(timezone.utc)
+    snapshot_before = None
+    try:
+        report_module = _load_module(SCRIPTS_DIR / REPORT_MODULE)
+        log.info("tirando foto do banco antes de aplicar qualquer migration (auditoria)...")
+        snapshot_before = report_module.build_snapshot(engine)
+    except Exception:
+        log.exception(
+            "falha ao tirar a foto 'antes' — relatório de auditoria ficará incompleto, "
+            "mas a pipeline continua."
+        )
+
+    exit_code = _run_migrations(migrations, engine)
+
+    if snapshot_before is not None:
+        _write_audit_report(engine, log_file, snapshot_before, started_at)
+
+    if exit_code == 0:
+        log.info("=== Pipeline concluída com sucesso ===")
+    log.info("Log completo em %s", log_file)
+    return exit_code
 
 
 if __name__ == "__main__":
