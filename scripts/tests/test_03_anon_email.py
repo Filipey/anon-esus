@@ -32,6 +32,12 @@ def _seed(engine):
                 "(co_seq serial PRIMARY KEY, no_email text)"
             )
         )
+        c.execute(
+            text(
+                "CREATE TABLE public.tb_unidade_saude "
+                "(co_seq serial PRIMARY KEY, ds_email text)"
+            )
+        )
         # e-mail preenchido, nulo e vazio (vazio deve ser preservado).
         c.execute(
             text(
@@ -44,6 +50,10 @@ def _seed(engine):
             text("INSERT INTO public.tb_fat_cad_individual (no_email) VALUES (:e1)"),
             {"e1": EMAIL_1},
         )
+        c.execute(
+            text("INSERT INTO public.tb_unidade_saude (ds_email) VALUES (:e2)"),
+            {"e2": EMAIL_2},
+        )
 
 
 def _values(engine):
@@ -52,21 +62,30 @@ def _values(engine):
             text("SELECT ds_email FROM public.tb_cidadao ORDER BY co_seq")
         ).scalars().all()
         fat = c.execute(text("SELECT no_email FROM public.tb_fat_cad_individual")).scalar()
-    return cidadao, fat
+        unidade = c.execute(text("SELECT ds_email FROM public.tb_unidade_saude")).scalar()
+    return cidadao, fat, unidade
 
 
 def test_substitui_emails_pela_constante(pg_engine):
     _seed(pg_engine)
     m.run(pg_engine)
-    cidadao, fat = _values(pg_engine)
+    cidadao, fat, unidade = _values(pg_engine)
     assert cidadao[0] == m.GENERIC_EMAIL
     assert fat == m.GENERIC_EMAIL
+
+
+def test_email_institucional_recebe_placeholder_proprio(pg_engine):
+    _seed(pg_engine)
+    m.run(pg_engine)
+    _, _, unidade = _values(pg_engine)
+    assert unidade == m.GENERIC_INSTITUTIONAL_EMAIL
+    assert unidade != m.GENERIC_EMAIL
 
 
 def test_nulls_e_vazios_preservados(pg_engine):
     _seed(pg_engine)
     m.run(pg_engine)
-    cidadao, _ = _values(pg_engine)
+    cidadao, _, _ = _values(pg_engine)
     assert cidadao[1] is None  # era NULL
     assert cidadao[2] == ""    # era string vazia
 
@@ -74,8 +93,8 @@ def test_nulls_e_vazios_preservados(pg_engine):
 def test_nenhum_email_original_permanece(pg_engine):
     _seed(pg_engine)
     m.run(pg_engine)
-    cidadao, fat = _values(pg_engine)
-    todos = {v for v in cidadao if v} | {fat}
+    cidadao, fat, unidade = _values(pg_engine)
+    todos = {v for v in cidadao if v} | {fat, unidade}
     assert EMAIL_1 not in todos and EMAIL_2 not in todos
 
 
@@ -109,13 +128,13 @@ def test_atomicidade_rollback_em_falha(pg_engine, monkeypatch):
 
     monkeypatch.setattr(
         m,
-        "EMAIL_COLUMNS",
-        list(m.EMAIL_COLUMNS) + [m.EmailColumn("public", "tb_poison", "no_email")],
+        "PERSONAL_EMAIL_COLUMNS",
+        list(m.PERSONAL_EMAIL_COLUMNS) + [m.EmailColumn("public", "tb_poison", "no_email")],
     )
 
     with pytest.raises(Exception):
         m.run(pg_engine)
 
-    cidadao, fat = _values(pg_engine)
+    cidadao, fat, unidade = _values(pg_engine)
     assert cidadao[0] == EMAIL_1
     assert fat == EMAIL_1
