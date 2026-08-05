@@ -112,6 +112,77 @@ def test_nulls_permanecem_nulos(pg_engine):
     assert unidades[3] is None  # 4ª linha era NULL
 
 
+def test_cnes_e_substituido_e_consistente_entre_tabelas(pg_engine):
+    with pg_engine.begin() as c:
+        c.execute(text("CREATE SCHEMA IF NOT EXISTS public"))
+        c.execute(
+            text(
+                "CREATE TABLE public.tb_unidade_saude "
+                "(co_seq serial PRIMARY KEY, no_unidade_saude text, nu_cnes text)"
+            )
+        )
+        c.execute(
+            text(
+                "CREATE TABLE public.tb_dim_unidade_saude "
+                "(co_seq serial PRIMARY KEY, no_unidade_saude text, nu_cnes text)"
+            )
+        )
+        c.execute(
+            text(
+                "INSERT INTO public.tb_unidade_saude (no_unidade_saude, nu_cnes) VALUES "
+                "(:a, '1234567')"
+            ),
+            {"a": U_A},
+        )
+        c.execute(
+            text(
+                "INSERT INTO public.tb_dim_unidade_saude (no_unidade_saude, nu_cnes) VALUES "
+                "(:a, '1234567')"
+            ),
+            {"a": U_A},
+        )
+
+    m.run(pg_engine)
+
+    with pg_engine.connect() as c:
+        cnes_a = c.execute(text("SELECT nu_cnes FROM public.tb_unidade_saude")).scalar()
+        cnes_b = c.execute(text("SELECT nu_cnes FROM public.tb_dim_unidade_saude")).scalar()
+
+    assert cnes_a != "1234567"
+    assert len(cnes_a) == 7 and cnes_a.isdigit()
+    assert cnes_a == cnes_b
+
+
+def test_cnes_e_substituido_tambem_nas_tabelas_de_referencia(pg_engine):
+    """tb_familia.nu_cnes guarda o valor real copiado, nao uma FK - se nao
+    for trocado com o mesmo mapa, da pra religar a unidade fake a real."""
+    with pg_engine.begin() as c:
+        c.execute(text("CREATE SCHEMA IF NOT EXISTS public"))
+        c.execute(
+            text(
+                "CREATE TABLE public.tb_unidade_saude "
+                "(co_seq serial PRIMARY KEY, no_unidade_saude text, nu_cnes text)"
+            )
+        )
+        c.execute(text("CREATE TABLE public.tb_familia (co_seq serial PRIMARY KEY, nu_cnes text)"))
+        c.execute(
+            text(
+                "INSERT INTO public.tb_unidade_saude (no_unidade_saude, nu_cnes) VALUES (:a, '1234567')"
+            ),
+            {"a": U_A},
+        )
+        c.execute(text("INSERT INTO public.tb_familia (nu_cnes) VALUES ('1234567')"))
+
+    m.run(pg_engine)
+
+    with pg_engine.connect() as c:
+        cnes_unidade = c.execute(text("SELECT nu_cnes FROM public.tb_unidade_saude")).scalar()
+        cnes_familia = c.execute(text("SELECT nu_cnes FROM public.tb_familia")).scalar()
+
+    assert cnes_familia != "1234567"
+    assert cnes_familia == cnes_unidade
+
+
 def test_atomicidade_rollback_em_falha(pg_engine, monkeypatch):
     """Se uma coluna-alvo falhar no meio, NADA é alterado (rollback)."""
     _seed(pg_engine)
