@@ -100,6 +100,26 @@ def test_substitui_registro_e_preserva_categoria(pg_engine):
     assert [row.co_categoria for row in dim] == [7, 8, 9]
 
 
+def test_substitui_registro_tambem_no_retrato_do_atendimento(pg_engine):
+    """tb_atend_prof guarda uma copia do registro no momento do
+    atendimento, separada de tb_prof - confirmado no schema real."""
+    with pg_engine.begin() as c:
+        c.execute(text("CREATE SCHEMA IF NOT EXISTS public"))
+        c.execute(
+            text(
+                "CREATE TABLE public.tb_atend_prof "
+                "(co_seq serial PRIMARY KEY, nu_conselho_classe text)"
+            )
+        )
+        c.execute(text("INSERT INTO public.tb_atend_prof (nu_conselho_classe) VALUES ('XYZ999')"))
+
+    m.run(pg_engine)
+
+    with pg_engine.connect() as c:
+        value = c.execute(text("SELECT nu_conselho_classe FROM public.tb_atend_prof")).scalar()
+    assert value == m.GENERIC_REGISTRATION
+
+
 def test_atomicidade_rollback_em_falha(pg_engine, monkeypatch):
     _seed(pg_engine)
 

@@ -48,6 +48,12 @@ REGISTRATION_COLUMNS: list[ColumnTarget] = [
     ColumnTarget("public", "ta_prof", "nu_conselho_classe"),
     ColumnTarget("public", "tb_prof", "nu_conselho_classe"),
     ColumnTarget("public", "tl_prof", "nu_conselho_classe"),
+    # tb_atend_prof e um "retrato" do profissional no momento do
+    # atendimento - guarda sua propria copia do registro, confirmada
+    # contra o schema real (nao e a mesma linha de tb_prof).
+    ColumnTarget("public", "ta_atend_prof", "nu_conselho_classe"),
+    ColumnTarget("public", "tb_atend_prof", "nu_conselho_classe"),
+    ColumnTarget("public", "tl_atend_prof", "nu_conselho_classe"),
 ]
 
 FAKER_LOCALE = "pt_BR"
