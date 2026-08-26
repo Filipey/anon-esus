@@ -18,6 +18,14 @@ Convenção:
 A pipeline para na primeira migration cujo teste falhe ou cuja aplicação
 falhe; como cada migration é atômica, o banco permanece consistente.
 
+**PIPELINE_SKIP_TESTS=1**: pula a etapa de teste (Postgres efêmero) e
+aplica direto no banco real. Existe só para destravar quando não há
+`initdb` disponível na máquina — nenhuma migration terá sido validada
+antes de tocar o banco real. Cada migration continua atômica (rollback
+individual em caso de erro), mas o comportamento em si não foi
+verificado antes. Desligado por padrão; precisa ser setado explicitamente
+a cada execução.
+
 Auditoria: antes de aplicar qualquer migration, `scripts/pipeline_report.py`
 tira uma "foto" (linhas totais, não-nulos, checksum agregado) de cada
 coluna/tabela declarada nas migrations. Depois da execução (com sucesso ou
@@ -29,6 +37,7 @@ colunas de fato tiveram conteúdo alterado — sem nunca expor um valor real.
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -40,6 +49,7 @@ SCRIPTS_DIR = ROOT / "scripts"
 TESTS_DIR = SCRIPTS_DIR / "tests"
 CONNECT_MODULE = "00_connect_db.py"
 REPORT_MODULE = "pipeline_report.py"
+SKIP_TESTS = os.getenv("PIPELINE_SKIP_TESTS") == "1"
 
 # `scripts/` no path para que pipeline_logging (e as migrations) importem.
 if str(SCRIPTS_DIR) not in sys.path:
@@ -97,16 +107,23 @@ def _run_migrations(migrations: list[Path], engine) -> int:
     for path in migrations:
         log.info("--> %s", path.name)
 
-        # 1) Testar antes de aplicar.
-        test_path = _test_path_for(path)
-        if not test_path.exists():
-            log.error("migration sem teste: esperado %s. Abortando.", test_path.name)
-            return 1
-        if not _run_tests(test_path):
-            log.error("testes de %s falharam. Migration NÃO aplicada.", path.name)
-            log.error("Banco em estado seguro (nada foi alterado).")
-            return 1
-        log.info("[teste] OK")
+        # 1) Testar antes de aplicar (a menos que SKIP_TESTS esteja ativo).
+        if SKIP_TESTS:
+            log.warning(
+                "[teste] PULADO (PIPELINE_SKIP_TESTS=1) — %s será aplicada SEM "
+                "validação prévia contra Postgres efêmero.",
+                path.name,
+            )
+        else:
+            test_path = _test_path_for(path)
+            if not test_path.exists():
+                log.error("migration sem teste: esperado %s. Abortando.", test_path.name)
+                return 1
+            if not _run_tests(test_path):
+                log.error("testes de %s falharam. Migration NÃO aplicada.", path.name)
+                log.error("Banco em estado seguro (nada foi alterado).")
+                return 1
+            log.info("[teste] OK")
 
         # 2) Aplicar no banco real.
         module = _load_module(path)
@@ -158,6 +175,12 @@ def _write_audit_report(engine, log_file: Path, snapshot_before: dict, started_a
 def main() -> int:
     log_file = setup_file_logging()
     log.info("=== Pipeline de migrations ===")
+    if SKIP_TESTS:
+        log.warning(
+            "=== PIPELINE_SKIP_TESTS=1: rodando SEM validação prévia (Postgres "
+            "efêmero indisponível). Nenhuma migration foi testada antes de "
+            "tocar o banco real. ==="
+        )
 
     migrations = _discover_migrations()
     if not migrations:
