@@ -29,6 +29,10 @@ scripts/
   audit_schema.py                 # ferramenta: reaudita o schema real (não é migration)
   pipeline_report.py              # relatório de auditoria antes/depois (não é migration)
   pipeline_logging.py             # logging centralizado (arquivo + console)
+  plots/                          # ferramentas de plotagem (não são migrations)
+    _common.py                    # estilo visual, conexão e helpers de consulta compartilhados
+    antropometrico.py             # distribuição + cardinalidade dos campos antropométricos
+    condicoes_medicas.py          # distribuição + cardinalidade de colunas candidatas a condição/diagnóstico
   tests/
     conftest.py                   # fixture `pg_engine`: Postgres efêmero
     _helpers.py                   # loader de migrations para os testes
@@ -47,6 +51,7 @@ scripts/
     test_audit_schema.py          # testes da classificação em audit_schema.py (sem banco)
     test_pipeline_report.py       # testes do relatório de auditoria antes/depois
 logs/                             # arquivos de log e relatórios de auditoria gerados a cada execução
+plots/                            # figuras (.pdf + .png) geradas por scripts/plots/ e scripts/plot_report.py
 ```
 
 ### Convenções
@@ -128,7 +133,8 @@ o logger com `get_logger("<nome>")`; como todos os loggers ficam sob
 > quantas linhas) — nunca os valores de CPF. O echo de SQL do SQLAlchemy
 > fica desligado de propósito para não vazar dados sensíveis no arquivo.
 
-Os arquivos `*.log` são ignorados pelo Git (`.gitignore`).
+`logs/` e `plots/` são ignorados pelo Git (`.gitignore`) — conteúdo
+gerado a cada execução, nunca commitado.
 
 ## Relatório de auditoria (quantitativo e qualitativo)
 
@@ -412,14 +418,54 @@ schema mudar ou uma migration nova for cogitada:
 python scripts/audit_schema.py
 ```
 
+## Plots de distribuição e cardinalidade (`scripts/plots/`)
+
+Ferramentas de plotagem (não são migrations, não fazem parte da pipeline
+de anonimização) para inspecionar a base real — em particular para
+comparar visualmente a base de treino/teste contra a base real antes de
+fechar a guideline final de tratamento de um dado. Mesmo estilo visual
+"LaTeX" de `scripts/plot_report.py` (serif + mathtext, figuras em
+`.pdf`+`.png` dentro de `plots/`).
+
+- `scripts/plots/_common.py`: estilo visual, conexão com o banco
+  (reaproveita `00_connect_db.py`) e helpers genéricos de consulta
+  (série numérica, cardinalidade, top-N de valores, raridade).
+- `scripts/plots/antropometrico.py`: reaproveita `ANTHRO_COLUMNS` de
+  `08_anon_antropometrico.py`, agrupa por campo semântico (peso, altura,
+  IMC, perímetro cefálico, circunferência abdominal, perímetro de
+  panturrilha, altura uterina) e gera, por campo, histograma + ECDF da
+  distribuição e um gráfico de cardinalidade relativa
+  (distintos/não-nulos). Esse número dá corpo à fragilidade já apontada
+  no docstring da migration 08: campo numérico de baixa cardinalidade,
+  hash (mesmo com sal) não resiste a um ataque de força bruta que
+  pré-calcule o range plausível inteiro.
+- `scripts/plots/condicoes_medicas.py`: descobre colunas candidatas a
+  condição/diagnóstico de saúde (CIAP, CID, "outra condição") via
+  `information_schema`, por padrão de nome — nenhuma migration cobre esse
+  dado ainda (ver "Lacunas" abaixo). Classifica pelo prefixo já usado no
+  schema (`co_`/`tp_`/`st_` = código → plota distribuição top-N de
+  valores e % de linhas com valor raro; `ds_`/`no_` = texto livre →
+  **nunca plota conteúdo**, só metadados de preenchimento/cardinalidade,
+  pra não vazar string sensível numa figura). Os padrões de nome
+  (`_NAME_PATTERNS`) são ponto de partida — confirme contra o schema real
+  antes de confiar no resultado, na mesma lógica de `CATEGORY_PATTERNS`
+  em `audit_schema.py`.
+
+```bash
+python scripts/plots/antropometrico.py
+python scripts/plots/condicoes_medicas.py
+```
+
 ## Lacunas ainda não automatizadas
 
 Itens que ficam para uma próxima fase, por exigirem pesquisa/metodologia
 própria em vez de substituição determinística de coluna: textos livres via
 NER, dados antropométricos extremos via differential privacy real (hoje só
 o hash provisório da migration 08), doenças raras/dados genéticos (geração
-sintética correlacionada), e regras de ciclo de vida/perfis (pertencem à
-futura geração de população sintética, não a esta pipeline).
+sintética correlacionada — `scripts/plots/condicoes_medicas.py` já mede o
+risco de reidentificação por raridade de código nessas colunas, mas ainda
+não implementa nenhum tratamento), e regras de ciclo de vida/perfis
+(pertencem à futura geração de população sintética, não a esta pipeline).
 
 ## Pontos abertos encontrados na auditoria contra o schema real
 
