@@ -191,9 +191,12 @@ def fetch_rarity(engine: Engine, schema: str, table: str, column: str, threshold
             ),
             {"threshold": threshold},
         ).one()
+    # sum(bigint) volta como numeric no Postgres (Decimal no Python) -
+    # convertido pra int aqui pra não quebrar aritmética com float depois
+    # (100.0 * Decimal levanta TypeError).
     return {
-        "distinct_raros": row.distinct_raros,
-        "linhas_raras": row.linhas_raras or 0,
-        "distinct_total": row.distinct_total,
-        "linhas_total": row.linhas_total or 0,
+        "distinct_raros": int(row.distinct_raros),
+        "linhas_raras": int(row.linhas_raras or 0),
+        "distinct_total": int(row.distinct_total),
+        "linhas_total": int(row.linhas_total or 0),
     }
