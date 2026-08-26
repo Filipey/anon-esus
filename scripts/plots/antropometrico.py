@@ -17,11 +17,20 @@ plausíveis, então um hash (mesmo com sal) não impede um ataque de força
 bruta que pré-calcule o hash de todo o range plausível — a Figura de
 cardinalidade dá um número a essa fragilidade.
 
+Cada execução escreve num diretório próprio, `plots/<banco>_<timestamp>/`
+(ver `_common.run_output_dir`), então rodar contra bancos diferentes — ou
+contra o mesmo banco antes/depois da pipeline de anonimização — nunca
+sobrescreve uma execução anterior.
+
 Uso:
     python scripts/plots/antropometrico.py
+    python scripts/plots/antropometrico.py --label antes   # ex.: antes da pipeline
+    python scripts/plots/antropometrico.py --label depois
 """
 
 from __future__ import annotations
+
+import argparse
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -34,6 +43,7 @@ from _common import (
     get_logger,
     load_engine,
     load_module,
+    run_output_dir,
     save_fig,
     set_latex_style,
 )
@@ -93,7 +103,7 @@ def _pool_values(engine, columns) -> pd.Series:
     return pd.concat(parts, ignore_index=True)
 
 
-def plot_distribuicao(field: str, values: pd.Series) -> None:
+def plot_distribuicao(out_dir, field: str, values: pd.Series) -> None:
     label = _FIELD_LABELS.get(field, field)
     fig, (ax_hist, ax_ecdf) = plt.subplots(1, 2, figsize=(8, 3.2))
 
@@ -112,10 +122,10 @@ def plot_distribuicao(field: str, values: pd.Series) -> None:
     sns.despine(fig=fig)
     fig.tight_layout()
 
-    save_fig(fig, f"antropometrico_{field}_distribuicao")
+    save_fig(fig, out_dir, f"antropometrico_{field}_distribuicao")
 
 
-def plot_cardinalidade(summary: pd.DataFrame) -> None:
+def plot_cardinalidade(out_dir, summary: pd.DataFrame) -> None:
     fig, ax = plt.subplots(figsize=(6, 4))
     ordered = summary.sort_values("razao_cardinalidade", ascending=False)
     sns.barplot(data=ordered, x="campo", y="razao_cardinalidade", color=COLOR_RISK, ax=ax)
@@ -126,12 +136,27 @@ def plot_cardinalidade(summary: pd.DataFrame) -> None:
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
     sns.despine(ax=ax)
     fig.tight_layout()
-    save_fig(fig, "antropometrico_cardinalidade")
+    save_fig(fig, out_dir, "antropometrico_cardinalidade")
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--label",
+        default=None,
+        help="rótulo opcional pra identificar a execução (ex.: 'antes', 'depois'), "
+        "somado ao nome do banco e ao timestamp no diretório de saída",
+    )
+    return parser.parse_args()
 
 
 def main() -> int:
+    args = _parse_args()
     set_latex_style()
     engine = load_engine()
+    out_dir = run_output_dir(engine, label=args.label)
+    log.info("diretório de saída: %s", out_dir)
+
     anthro_module = load_module("08_anon_antropometrico.py")
     grouped = _group_columns_by_field(anthro_module.ANTHRO_COLUMNS)
 
@@ -143,8 +168,8 @@ def main() -> int:
             log.warning("campo '%s' sem valores na base, pulando plot de distribuição", field)
             continue
 
-        plot_distribuicao(field, values)
-        log.info("gerado: plots/antropometrico_%s_distribuicao.pdf (+ .png)", field)
+        plot_distribuicao(out_dir, field, values)
+        log.info("gerado: %s/antropometrico_%s_distribuicao.pdf (+ .png)", out_dir, field)
 
         non_null = len(values)
         distinct = int(values.nunique())
@@ -159,8 +184,8 @@ def main() -> int:
 
     if summary_rows:
         summary = pd.DataFrame(summary_rows)
-        plot_cardinalidade(summary)
-        log.info("gerado: plots/antropometrico_cardinalidade.pdf (+ .png)")
+        plot_cardinalidade(out_dir, summary)
+        log.info("gerado: %s/antropometrico_cardinalidade.pdf (+ .png)", out_dir)
         log.info("\n%s", summary.to_string(index=False))
     else:
         log.warning("nenhum campo antropométrico com valores encontrado.")

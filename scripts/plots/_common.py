@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from datetime import datetime
 from pathlib import Path
 from types import ModuleType
 
@@ -72,10 +73,29 @@ def load_engine() -> Engine:
     return load_module("00_connect_db.py").engine
 
 
-def save_fig(fig, stem: str) -> Path:
-    """Salva a figura em .pdf e .png (mesma convenção de plot_report.py)."""
-    PLOTS_DIR.mkdir(exist_ok=True)
-    path = PLOTS_DIR / f"{stem}.pdf"
+def run_output_dir(engine: Engine, label: str | None = None) -> Path:
+    """Diretório de saída de uma execução: `plots/<banco>_<timestamp>[_<label>]/`.
+
+    Cada chamada cria um diretório novo — nunca sobrescreve uma execução
+    anterior. O nome do banco vem da própria conexão (`engine.url.database`),
+    então rodar o mesmo script contra a base de teste e depois contra a real
+    (ou contra a real antes/depois da pipeline de anonimização) produz pastas
+    diferentes automaticamente. `label` é opcional, só para marcar a intenção
+    da execução (ex.: "antes", "depois") além do timestamp.
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    db_name = engine.url.database or "banco"
+    parts = [db_name, timestamp] + ([label] if label else [])
+    out_dir = PLOTS_DIR / "_".join(parts)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir
+
+
+def save_fig(fig, out_dir: Path, stem: str) -> Path:
+    """Salva a figura em .pdf e .png (mesma convenção de plot_report.py),
+    dentro do diretório da execução (ver `run_output_dir`)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{stem}.pdf"
     fig.savefig(path)
     fig.savefig(path.with_suffix(".png"))
     plt.close(fig)

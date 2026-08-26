@@ -26,12 +26,20 @@ condição rara que só aparece 1-2 vezes funciona como quase-identificador
 mesmo sem ser, isoladamente, um dado direto — é o principal motivo de
 olhar pra essas colunas junto com CPF/CNS/endereço.
 
+Cada execução escreve num diretório próprio, `plots/<banco>_<timestamp>/`
+(ver `_common.run_output_dir`), então rodar contra bancos diferentes — ou
+contra o mesmo banco antes/depois da pipeline de anonimização — nunca
+sobrescreve uma execução anterior.
+
 Uso:
     python scripts/plots/condicoes_medicas.py
+    python scripts/plots/condicoes_medicas.py --label antes
+    python scripts/plots/condicoes_medicas.py --label depois
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 from dataclasses import dataclass
 
@@ -48,6 +56,7 @@ from _common import (
     fetch_value_counts,
     get_logger,
     load_engine,
+    run_output_dir,
     save_fig,
     set_latex_style,
 )
@@ -116,7 +125,7 @@ def discover_condition_columns(engine) -> list[ConditionColumn]:
     return found
 
 
-def plot_frequencia(col: ConditionColumn, counts: pd.DataFrame) -> None:
+def plot_frequencia(out_dir, col: ConditionColumn, counts: pd.DataFrame) -> None:
     fig, ax = plt.subplots(figsize=(6, max(3, 0.22 * len(counts))))
     ordered = counts.sort_values("contagem", ascending=True)
     sns.barplot(data=ordered, y="valor", x="contagem", color=COLOR_PRIMARY, ax=ax, orient="h")
@@ -126,10 +135,10 @@ def plot_frequencia(col: ConditionColumn, counts: pd.DataFrame) -> None:
     ax.set_title(f"{col.table}.{col.column} — top {len(counts)} valores")
     sns.despine(ax=ax)
     fig.tight_layout()
-    save_fig(fig, f"condicoes_{col.table}_{col.column}_frequencia")
+    save_fig(fig, out_dir, f"condicoes_{col.table}_{col.column}_frequencia")
 
 
-def plot_raridade(summary: pd.DataFrame) -> None:
+def plot_raridade(out_dir, summary: pd.DataFrame) -> None:
     fig, ax = plt.subplots(figsize=(6, max(3, 0.3 * len(summary))))
     ordered = summary.sort_values("pct_linhas_raras", ascending=True)
     label = ordered["tabela"] + "." + ordered["coluna"]
@@ -139,12 +148,26 @@ def plot_raridade(summary: pd.DataFrame) -> None:
     ax.set_title("Risco de reidentificação por raridade do código")
     sns.despine(ax=ax)
     fig.tight_layout()
-    save_fig(fig, "condicoes_raridade")
+    save_fig(fig, out_dir, "condicoes_raridade")
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--label",
+        default=None,
+        help="rótulo opcional pra identificar a execução (ex.: 'antes', 'depois'), "
+        "somado ao nome do banco e ao timestamp no diretório de saída",
+    )
+    return parser.parse_args()
 
 
 def main() -> int:
+    args = _parse_args()
     set_latex_style()
     engine = load_engine()
+    out_dir = run_output_dir(engine, label=args.label)
+    log.info("diretório de saída: %s", out_dir)
 
     columns = discover_condition_columns(engine)
     if not columns:
@@ -169,9 +192,12 @@ def main() -> int:
         if col.is_coded:
             counts = fetch_value_counts(engine, SCHEMA, col.table, col.column, top_n=TOP_N)
             if not counts.empty:
-                plot_frequencia(col, counts)
+                plot_frequencia(out_dir, col, counts)
                 log.info(
-                    "gerado: plots/condicoes_%s_%s_frequencia.pdf (+ .png)", col.table, col.column
+                    "gerado: %s/condicoes_%s_%s_frequencia.pdf (+ .png)",
+                    out_dir,
+                    col.table,
+                    col.column,
                 )
 
             rarity = fetch_rarity(engine, SCHEMA, col.table, col.column, RARITY_THRESHOLD)
@@ -206,8 +232,8 @@ def main() -> int:
 
     if coded_summary_rows:
         summary = pd.DataFrame(coded_summary_rows)
-        plot_raridade(summary)
-        log.info("gerado: plots/condicoes_raridade.pdf (+ .png)")
+        plot_raridade(out_dir, summary)
+        log.info("gerado: %s/condicoes_raridade.pdf (+ .png)", out_dir)
         log.info("\nColunas codificadas:\n%s", summary.to_string(index=False))
 
     if freetext_summary_rows:

@@ -51,7 +51,7 @@ scripts/
     test_audit_schema.py          # testes da classificação em audit_schema.py (sem banco)
     test_pipeline_report.py       # testes do relatório de auditoria antes/depois
 logs/                             # arquivos de log e relatórios de auditoria gerados a cada execução
-plots/                            # figuras (.pdf + .png) geradas por scripts/plots/ e scripts/plot_report.py
+plots/                             # figuras (.pdf + .png); scripts/plots/ cria um subdiretório por execução (banco + timestamp)
 ```
 
 ### Convenções
@@ -454,7 +454,20 @@ fechar a guideline final de tratamento de um dado. Mesmo estilo visual
 ```bash
 python scripts/plots/antropometrico.py
 python scripts/plots/condicoes_medicas.py
+
+# --label é opcional, só pra marcar a intenção da execução além do timestamp
+python scripts/plots/antropometrico.py --label antes   # antes da pipeline de anonimização
+python scripts/plots/antropometrico.py --label depois  # depois, mesmo banco
 ```
+
+**Cada execução escreve num diretório próprio** —
+`plots/<banco>_<timestamp>[_<label>]/` (`_common.run_output_dir`) — nunca
+sobrescreve uma execução anterior. O nome do banco vem da própria conexão
+(`engine.url.database`), não de configuração separada, então rodar contra
+a base de teste e depois contra a real já cai em pastas diferentes sem
+precisar de nenhum argumento; `--label antes`/`--label depois` só ajuda a
+marcar a intenção quando é o **mesmo** banco nos dois momentos (a pipeline
+anonimiza em lugar, não gera uma cópia).
 
 ## Lacunas ainda não automatizadas
 
