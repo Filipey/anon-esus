@@ -23,7 +23,9 @@ def _seed(engine):
                 "no_logradouro text, "
                 "no_ponto_referencia text, "
                 "nu_cep text, "
-                "nu_num_logradouro text"
+                "nu_num_logradouro text, "
+                "nu_latitude text, "
+                "nu_longitude text"
                 ")"
             )
         )
@@ -31,13 +33,13 @@ def _seed(engine):
             text(
                 "INSERT INTO public.tb_fat_cad_domiciliar "
                 "(co_dim_municipio, no_bairro, no_complemento, no_logradouro, "
-                "no_ponto_referencia, nu_cep, nu_num_logradouro) VALUES "
-                "(1, 'Centro', 'Apto 1', 'Rua A', 'Padaria', '11111-111', '10'), "
-                "(1, 'Norte', 'Casa', 'Rua B', 'Escola', '22222-222', '20'), "
-                "(2, 'Sul', 'Fundos', 'Rua C', 'Praça', '33333-333', '30'), "
-                "(2, 'Leste', 'Bloco 2', 'Rua D', 'Posto', '44444-444', '40'), "
-                "(3, 'Unico', NULL, 'Rua E', NULL, '55555-555', '50'), "
-                "(1, NULL, NULL, NULL, NULL, NULL, NULL)"
+                "no_ponto_referencia, nu_cep, nu_num_logradouro, nu_latitude, nu_longitude) VALUES "
+                "(1, 'Centro', 'Apto 1', 'Rua A', 'Padaria', '11111-111', '10', '-1.1', '-2.1'), "
+                "(1, 'Norte', 'Casa', 'Rua B', 'Escola', '22222-222', '20', '-1.2', '-2.2'), "
+                "(2, 'Sul', 'Fundos', 'Rua C', 'Praça', '33333-333', '30', '-1.3', '-2.3'), "
+                "(2, 'Leste', 'Bloco 2', 'Rua D', 'Posto', '44444-444', '40', '-1.4', '-2.4'), "
+                "(3, 'Unico', NULL, 'Rua E', NULL, '55555-555', '50', '-1.5', '-2.5'), "
+                "(1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)"
             )
         )
 
