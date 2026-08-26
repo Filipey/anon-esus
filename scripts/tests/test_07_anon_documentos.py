@@ -66,6 +66,37 @@ def test_nome_de_arquivo_e_excluido_mas_fk_preservada(pg_engine):
     assert arquivo[1].no_arquivo is None
 
 
+def test_coluna_not_null_recebe_placeholder_em_vez_de_null(pg_engine, monkeypatch):
+    """No banco real, `tb_arquivo.no_arquivo` e NOT NULL - um UPDATE ... SET
+    = NULL quebra com NotNullViolation. Nesse caso a migration deve usar um
+    placeholder generico em vez de NULL."""
+    with pg_engine.begin() as c:
+        c.execute(
+            text(
+                "CREATE TABLE public.tb_arquivo_not_null "
+                "(co_seq serial PRIMARY KEY, no_arquivo text NOT NULL)"
+            )
+        )
+        c.execute(
+            text("INSERT INTO public.tb_arquivo_not_null (no_arquivo) VALUES ('exame.pdf')")
+        )
+
+    monkeypatch.setattr(
+        m,
+        "DOCUMENT_COLUMNS",
+        list(m.DOCUMENT_COLUMNS)
+        + [m.DocumentColumn("public", "tb_arquivo_not_null", "no_arquivo")],
+    )
+
+    m.run(pg_engine)
+
+    with pg_engine.connect() as c:
+        valor = c.execute(
+            text("SELECT no_arquivo FROM public.tb_arquivo_not_null")
+        ).scalar_one()
+    assert valor == m.GENERIC_FILENAME
+
+
 def test_atomicidade_rollback_em_falha(pg_engine, monkeypatch):
     _seed(pg_engine)
 

@@ -50,12 +50,17 @@ DOCUMENT_COLUMNS: list[DocumentColumn] = [
     DocumentColumn("public", "tb_migracao_estrutura", "no_arquivo_migracao"),
 ]
 
+# Placeholder usado quando a coluna e NOT NULL no banco real (ex.:
+# `tb_arquivo.no_arquivo`) e por isso nao pode simplesmente virar NULL.
+GENERIC_FILENAME = "arquivo_removido"
 
-def _column_exists(conn: Connection, col: DocumentColumn) -> bool:
-    found = conn.execute(
+
+def _column_info(conn: Connection, col: DocumentColumn) -> tuple[bool, str] | None:
+    """Retorna (nullable, data_type) ou None se a coluna nao existir."""
+    row = conn.execute(
         text(
             """
-            SELECT 1
+            SELECT is_nullable, data_type
             FROM information_schema.columns
             WHERE table_schema = :schema
               AND table_name = :table
@@ -64,7 +69,9 @@ def _column_exists(conn: Connection, col: DocumentColumn) -> bool:
         ),
         {"schema": col.schema, "table": col.table, "column": col.column},
     ).first()
-    return found is not None
+    if row is None:
+        return None
+    return row[0] == "YES", row[1]
 
 
 def run(engine: Engine) -> None:
@@ -74,16 +81,27 @@ def run(engine: Engine) -> None:
     with engine.begin() as conn:
         total = 0
         for col in DOCUMENT_COLUMNS:
-            if not _column_exists(conn, col):
+            info = _column_info(conn, col)
+            if info is None:
                 log.warning("coluna inexistente, pulando: %s", col.qualified)
                 continue
+            nullable, data_type = info
 
+            if nullable:
+                new_value_sql = "NULL"
+            elif data_type == "bytea":
+                new_value_sql = "''::bytea"
+            else:
+                new_value_sql = ":placeholder"
+
+            params = {} if new_value_sql != ":placeholder" else {"placeholder": GENERIC_FILENAME}
             result = conn.execute(
                 text(
                     f'UPDATE "{col.schema}"."{col.table}" '
-                    f'SET "{col.column}" = NULL '
+                    f'SET "{col.column}" = {new_value_sql} '
                     f'WHERE "{col.column}" IS NOT NULL'
-                )
+                ),
+                params,
             )
             log.info("%s: %d valor(es) excluido(s)", col.qualified, result.rowcount)
             total += result.rowcount or 0
