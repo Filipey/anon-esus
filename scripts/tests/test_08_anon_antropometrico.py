@@ -109,6 +109,41 @@ def test_tb_medicao_colunas_texto_sao_hasheadas(pg_engine):
     assert rows[0].nu_medicao_peso == rows[1].nu_medicao_peso  # mesmo valor -> mesmo hash
 
 
+def test_numeric_com_precisao_limitada_nao_estoura(pg_engine, monkeypatch):
+    """`nu_perim_panturrilha` no banco real e `numeric(3, 1)` (< 100.0) - o
+    modulo padrao do hash (30000) estoura essa coluna. O modulo precisa ser
+    calculado a partir de precision/scale reais da coluna."""
+    with pg_engine.begin() as c:
+        c.execute(text("CREATE SCHEMA IF NOT EXISTS public"))
+        c.execute(
+            text(
+                "CREATE TABLE public.tb_medicao_estreita "
+                "(co_seq serial PRIMARY KEY, nu_perim_panturrilha numeric(3, 1))"
+            )
+        )
+        c.execute(
+            text(
+                "INSERT INTO public.tb_medicao_estreita (nu_perim_panturrilha) VALUES (35.0)"
+            )
+        )
+
+    monkeypatch.setattr(
+        m,
+        "ANTHRO_COLUMNS",
+        list(m.ANTHRO_COLUMNS)
+        + [m.AnthroColumn("public", "tb_medicao_estreita", "nu_perim_panturrilha")],
+    )
+
+    m.run(pg_engine)
+
+    with pg_engine.connect() as c:
+        valor = c.execute(
+            text("SELECT nu_perim_panturrilha FROM public.tb_medicao_estreita")
+        ).scalar_one()
+    assert valor != 35.0
+    assert abs(valor) < 100
+
+
 def test_atomicidade_rollback_em_falha(pg_engine, monkeypatch):
     _seed(pg_engine)
 

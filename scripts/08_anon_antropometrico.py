@@ -103,11 +103,13 @@ TEXT_TYPES = {"character varying", "character", "text"}
 NUMERIC_HASH_MODULUS = 30_000
 
 
-def _column_info(conn: Connection, col: AnthroColumn) -> tuple[str, int | None] | None:
+def _column_info(
+    conn: Connection, col: AnthroColumn
+) -> tuple[str, int | None, int | None, int | None] | None:
     row = conn.execute(
         text(
             """
-            SELECT data_type, character_maximum_length
+            SELECT data_type, character_maximum_length, numeric_precision, numeric_scale
             FROM information_schema.columns
             WHERE table_schema = :schema
               AND table_name = :table
@@ -116,14 +118,40 @@ def _column_info(conn: Connection, col: AnthroColumn) -> tuple[str, int | None] 
         ),
         {"schema": col.schema, "table": col.table, "column": col.column},
     ).first()
-    return (row.data_type, row.character_maximum_length) if row else None
+    return (
+        (row.data_type, row.character_maximum_length, row.numeric_precision, row.numeric_scale)
+        if row
+        else None
+    )
 
 
-def _hash_expr(column_ref: str, data_type: str, max_length: int | None) -> str | None:
+def _numeric_modulus(precision: int | None, scale: int | None) -> int:
+    """Maior modulo que cabe na coluna sem estourar `numeric(precision, scale)`.
+
+    Ex.: `numeric(3, 1)` aceita valores com so 2 digitos antes da virgula
+    (< 100) - usar o modulo padrao (30000) estouraria a coluna. Tipos sem
+    precisao declarada (bigint, double precision, numeric sem parametros,
+    ...) usam o modulo padrao, que ja cabe com folga em smallint (32767).
+    """
+    if precision is None:
+        return NUMERIC_HASH_MODULUS
+    digits_before_point = max(1, precision - (scale or 0))
+    max_exclusive = 10**digits_before_point
+    return min(NUMERIC_HASH_MODULUS, max_exclusive)
+
+
+def _hash_expr(
+    column_ref: str,
+    data_type: str,
+    max_length: int | None,
+    numeric_precision: int | None,
+    numeric_scale: int | None,
+) -> str | None:
     salted = f"({column_ref}::text || '{ANON_SALT}')"
     if data_type in NUMERIC_TYPES:
         seed = f"(('x' || substr(md5({salted}), 1, 8))::bit(32)::bigint)"
-        return f"({seed} % {NUMERIC_HASH_MODULUS})"
+        modulus = _numeric_modulus(numeric_precision, numeric_scale)
+        return f"({seed} % {modulus})"
     if data_type in TEXT_TYPES:
         # Nunca estoura o limite real da coluna (character(N)/varchar(N)).
         length = 16 if max_length is None else min(16, max_length)
@@ -142,9 +170,11 @@ def run(engine: Engine) -> None:
             if info is None:
                 log.warning("coluna inexistente, pulando: %s", col.qualified)
                 continue
-            data_type, max_length = info
+            data_type, max_length, numeric_precision, numeric_scale = info
 
-            expr = _hash_expr(f't."{col.column}"', data_type, max_length)
+            expr = _hash_expr(
+                f't."{col.column}"', data_type, max_length, numeric_precision, numeric_scale
+            )
             if expr is None:
                 log.warning(
                     "tipo de dado nao tratado (%s), pulando: %s", data_type, col.qualified
