@@ -8,3 +8,8 @@ psycopg2-binary
 # testes
 pytest
 testing.postgresql
+
+# visualização (scripts/plot_report.py)
+matplotlib
+seaborn
+pandas
