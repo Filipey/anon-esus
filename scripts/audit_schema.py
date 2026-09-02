@@ -78,6 +78,27 @@ CATEGORY_PATTERNS: list[tuple[str, list[str], str]] = [
         ],
         "endereco",
     ),
+    # Territorio de saude. Nao existia como categoria ate a enumeracao do
+    # schema real encontrar 29 colunas de INE e 21 de micro-area sem
+    # tratamento algum - a lacuna nunca aparecia justamente porque nao havia
+    # padrao que a pegasse. Padroes ancorados no inicio de proposito:
+    # "%ine%" solto casaria com "painel", "online", "sanguineo", "inep" e
+    # "inelegivel".
+    (
+        "INE equipe",
+        ["nu_ine", "nu_ine_%"],
+        "identificador nacional de equipe - publico, reidentifica a equipe e a unidade",
+    ),
+    (
+        "Micro-area",
+        ["nu_micro_area", "nu_micro_area_%"],
+        "territorio do agente comunitario - geografia mais fina que o bairro",
+    ),
+    (
+        "Territorio indigena",
+        ["st_microarea_polo_base"],
+        "marcador de origem etnica: dado sensivel, nao identificador - analise da fase 2",
+    ),
     ("Data nascimento", ["dt_nascimento%", "%_nascimento", "%dt_participante_nascimento"], "data de nascimento"),
     (
         "Data registro",
