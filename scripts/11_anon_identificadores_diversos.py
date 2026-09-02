@@ -10,9 +10,10 @@ proximo ja em uso no projeto:
   deterministico salgado, mesmo mecanismo de `08_anon_antropometrico.py` e
   `10_anon_cns.py`.
 - Telefone: numero ficticio via Faker, mapa deterministico por valor
-  (mesmo padrao de `05_anon_profissional.py`/`09_anon_nome_cidadao.py`).
-  Inclui telefone de unidade/DSEI/polo - diferente do e-mail
-  institucional, um telefone ficticio nao "rotula" a unidade como
+  (mesmo padrao de `05_anon_profissional.py`/`09_anon_nome_cidadao.py`),
+  gerado com a mesma quantidade de digitos do valor original - ver
+  `_fake_phone`. Inclui telefone de unidade/DSEI/polo - diferente do
+  e-mail institucional, um telefone ficticio nao "rotula" a unidade como
   cidadao, entao nao precisa de um placeholder separado.
 - Naturalizacao (data): mantem so o ano, zera dia e mes.
 - Identificacao mista (CPF/CNS no mesmo campo): detecta o formato pelo
@@ -30,6 +31,7 @@ antecedente).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from faker import Faker
@@ -281,10 +283,25 @@ def _hash_columns(conn: Connection, columns: list[Column], desired_length: int) 
     return total
 
 
-def _fake_phone(index: int) -> str:
+_NON_DIGITS = re.compile(r"\D")
+
+
+def _fake_phone(index: int, digits: int) -> str:
+    """Telefone ficticio com a MESMA quantidade de digitos do original.
+
+    Gerar sempre 11 digitos estourava qualquer coluna mais estreita que
+    isso: `tb_dsei.nu_telefone1`/`nu_telefone2` sao `varchar(10)` no schema
+    real, e a migration inteira caia com StringDataRightTruncation (e era
+    revertida por completo, junto com prontuario, NIS e o resto). O teste
+    nao pegava porque modelava a coluna como `varchar(20)`.
+
+    Preservar o comprimento garante que o valor ficticio cabe em qualquer
+    coluna onde o original ja cabia, sem precisar de tratamento por coluna
+    - o mapa continua unico por valor, como em `05`/`09`.
+    """
     fake = Faker(FAKER_LOCALE)
     fake.seed_instance(FAKER_SEED + index)
-    return fake.numerify("###########")
+    return fake.numerify("#" * digits)
 
 
 def _collect_raw_values(conn: Connection, col: Column) -> set[str]:
@@ -312,7 +329,10 @@ def _anon_phones(conn: Connection) -> int:
     if not values:
         return 0
 
-    value_to_fake = {value: _fake_phone(i) for i, value in enumerate(sorted(values))}
+    value_to_fake = {
+        value: _fake_phone(i, max(1, len(_NON_DIGITS.sub("", value))))
+        for i, value in enumerate(sorted(values))
+    }
     conn.execute(
         text(
             "CREATE TEMP TABLE _telefone_map "
