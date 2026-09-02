@@ -19,13 +19,15 @@ scripts/
   03_anon_email.py                # migration: e-mails -> termo genérico (pessoal/institucional)
   04_anon_datas_cidadao.py        # migration: dia de nascimento + datas de registro (auto-descoberta)
   05_anon_profissional.py         # migration: nomes/registros de profissionais
-  06_anon_endereco.py             # migration: endereços -> outro do mesmo município
+  06_anon_endereco.py             # migration: endereços -> outro do mesmo município (A SUBSTITUIR)
   07_anon_documentos.py           # migration: exclui conteúdo/nome de arquivos anexados
   08_anon_antropometrico.py       # migration: dado antropométrico -> hash provisório
   09_anon_nome_cidadao.py         # migration: nome do cidadão (próprio/mãe/pai/social)
   10_anon_cns.py                  # migration: CNS -> hash provisório
   11_anon_identificadores_diversos.py # migration: prontuário, telefone, NIS, naturalização, óbito/DO, identificação mista
   12_anon_ip_logs.py              # migration: exclui logs de acesso/auditoria e o IP
+  13_anon_ine.py                  # migration: INE de equipe -> código fictício
+  14_anon_territorio.py           # migration: coordenada de visita e micro-área -> suprimidas
   audit_schema.py                 # ferramenta: reaudita o schema real (não é migration)
   pipeline_report.py              # relatório de auditoria antes/depois (não é migration)
   pipeline_logging.py             # logging centralizado (arquivo + console)
@@ -48,6 +50,8 @@ scripts/
     test_10_anon_cns.py           # testes da migration 10
     test_11_anon_identificadores_diversos.py # testes da migration 11
     test_12_anon_ip_logs.py       # testes da migration 12
+    test_13_anon_ine.py           # testes da migration 13
+    test_14_anon_territorio.py    # testes da migration 14
     test_audit_schema.py          # testes da classificação em audit_schema.py (sem banco)
     test_pipeline_report.py       # testes do relatório de auditoria antes/depois
 logs/                             # arquivos de log e relatórios de auditoria gerados a cada execução
@@ -301,6 +305,24 @@ corrigida.
 
 ## Migration 06 — Endereços de cidadãos
 
+> **Pendente de substituição (decisão de set/2026).** A abordagem descrita
+> abaixo — permutação de endereços dentro do município — foi medida contra o
+> banco real e falha de duas formas: é **inerte** onde o município de origem
+> tem um único endereço candidato (87 de 153; ~743 registros mantêm o
+> endereço real, sem aviso no log) ou **reversível** onde tem exatamente dois
+> (o `% 1` anula o hash e a troca vira transposição determinística); e onde o
+> conjunto de candidatos é grande, **destrói a associação** entre a pessoa e
+> o lugar, que era o requisito de utilidade de partida. O conjunto de
+> endereços por município é invariante sob a operação: ela permuta, não cria
+> diversidade.
+>
+> O desenho aprovado suprime o endereço completo (identificador direto) e
+> reconstrói a utilidade por atributos derivados — bucket geográfico com k
+> mínimo e faixa de distância até a unidade de vínculo. Bloqueado na
+> geocodificação das 12 unidades (trabalho manual, antes da migration 02, que
+> destrói o CNES usado na consulta pública), na escolha do eixo geográfico e
+> na definição de k e da largura da banda. Ver `docs/relatorio_migrations.md`.
+
 Substitui o endereço completo por outro endereço já existente na mesma tabela
 e no mesmo município. A migration troca o conjunto de campos de uma vez
 (bairro, complemento, logradouro, referência, CEP, número e, quando existem,
@@ -405,6 +427,58 @@ permissão (RBAC), não log de acesso.
 - Antes de deletar qualquer tabela de `DELETE_TABLES`, o script confere de
   novo se apareceu alguma FK apontando para ela; se sim, pula com aviso em
   vez de arriscar uma falha de integridade referencial.
+
+## Migration 13 — INE (Identificador Nacional de Equipe)
+
+Substitui o INE por um código fictício determinístico e consistente entre
+tabelas, nas **29 colunas** confirmadas por enumeração do schema real
+(inclui as variantes de papel: `nu_ine_vinc_equipe`, `nu_ine_executante`,
+`nu_ine_solicitante`, `nu_ine_finalizador_obs`, `nu_ine_dado_serializado`).
+
+Mesma justificativa da migration 02 para o CNES, aplicada um nível abaixo:
+o INE é **público**, e a cadeia `INE → equipe → CNES → unidade → endereço
+real` desfaz o trabalho da 02 por um caminho lateral. Como os extratos
+públicos do cadastro nacional trazem a composição de profissionais por
+equipe, também enfraquece a 05.
+
+É migration nova em vez de extensão da 02 porque a 02 já foi aplicada em
+bases reais e a pipeline não é idempotente — re-rodar re-hashearia CNES já
+fictício.
+
+O valor fictício tem a **mesma quantidade de dígitos do original**, o que
+garante que cabe em qualquer coluna onde o original já cabia sem clampar
+por coluna (o que quebraria a consistência do mapa). Foi exatamente o
+descuido oposto que derrubou a migration 11 no banco real.
+
+`co_equipe`/`co_dim_equipe` não são tocadas: chaves substitutas opacas
+preservam o vínculo sem revelar a equipe real.
+
+## Migration 14 — Coordenada de visita e micro-área
+
+Suprime as duas representações de localização que sobreviviam à migration
+06 por estarem em colunas que ela não declara.
+
+- **Coordenada da visita domiciliar** (6 colunas em 3 tabelas): GPS
+  capturado pelo agente na porta da casa. No banco real, 105.317 visitas
+  geolocalizadas com 102.380 pontos distintos e dispersão mediana de
+  15,2 m por cidadão — 41% da base localizável a menos de 50 m. Como a
+  chave que liga visita a cidadão sobrevive à anonimização, a troca de
+  endereço da 06 era contornável por join, e para 1.842 cidadãos a
+  coordenada permitia **inverter a própria troca**.
+- **Micro-área** (21 colunas): território do agente comunitário, ~240 a
+  ~475 pessoas — provavelmente mais fina que o setor censitário.
+
+Colunas anuláveis viram `NULL`; coluna de texto `NOT NULL` recebe string
+vazia; coluna `NOT NULL` **não textual** (coordenada obrigatória) é pulada
+com aviso em vez de receber zero — zerar criaria uma coordenada fictícia
+plausível, o que é pior que não tratar, e o aviso deixa a auditoria
+sinalizar.
+
+`st_microarea_polo_base` fica **fora de propósito**: não é identificador
+geográfico, é marcador de origem étnica — dado sensível pela LGPD, que
+pertence à análise de atributo sensível da fase 2. A auditoria passou a
+categorizá-lo como "Território indígena" para não voltar a passar
+despercebido.
 
 ## Auditoria do schema (`scripts/audit_schema.py`)
 

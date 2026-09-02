@@ -36,16 +36,25 @@ idoso etc.).
 
 ## Estado atual
 
-- 11 migrations implementadas (`scripts/01_anon_cpf.py` até
-  `11_anon_identificadores_diversos.py`), cobrindo schema operacional e
+- 14 migrations implementadas (`scripts/01_anon_cpf.py` até
+  `14_anon_territorio.py`), cobrindo schema operacional e
   Data Warehouse: CPF, CNS (hash provisório), nome (cidadão e
   profissional), unidade de saúde (nome e CNES), e-mail (pessoal e
   institucional), endereço, data de nascimento/registro, dado
-  antropométrico (hash provisório), documentos/anexos, e identificadores
+  antropométrico (hash provisório), documentos/anexos, identificadores
   diversos (prontuário, telefone, NIS, naturalização, óbito/DO,
-  identificação mista). A lista de colunas de cada migration é conferida
-  contra o schema físico real via `scripts/audit_schema.py`
-  (`docs/auditoria_schema.md`).
+  identificação mista), logs de acesso e IP, INE de equipe, e supressão
+  de coordenada de visita domiciliar e micro-área. A lista de colunas de
+  cada migration é conferida contra o schema físico real via
+  `scripts/audit_schema.py` (`docs/auditoria_schema.md`).
+- **`06_anon_endereco.py` está pendente de substituição.** A permutação de
+  endereços dentro do município foi medida contra o banco real e falha nos
+  dois sentidos — é inerte ou reversível onde o município de origem tem
+  poucos endereços candidatos, e destrói a associação pessoa↔lugar onde
+  tem muitos. O desenho aprovado suprime o endereço completo e reconstrói
+  a utilidade por atributos derivados. Bloqueado em decisões e em trabalho
+  manual (geocodificação das 12 unidades). Ver
+  [`docs/relatorio_migrations.md`](docs/relatorio_migrations.md).
 - **Fase 2, ainda fora do escopo desta pipeline** (decisão explícita):
   texto livre via NER, differential privacy real para dado antropométrico
   extremo, geração sintética de doenças raras/dados genéticos, e as
