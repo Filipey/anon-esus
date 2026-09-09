@@ -32,7 +32,11 @@ from _conexao import colunas_de, conectar, consulta, existe_tabela, gravar, titu
 CSV_UNIDADES = Path(__file__).resolve().parent / "unidades_coordenadas.csv"
 
 LARGURAS_M = (100, 250, 500, 1000)
-LIMIARES = (2, 5, 10, 20, 50)
+LIMIARES = (2, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100)
+
+# Acima disto, num municipio, e erro de coordenada ou vinculo cruzado - nao
+# distancia real ate a propria unidade de vinculo.
+LIMITE_SANIDADE_M = 25_000
 
 # Domicilios geolocalizados, na ordem de preferencia.
 FONTES_DOMICILIO = ["tb_cds_domicilio", "tb_cds_cad_domiciliar", "tb_fat_cad_domiciliar"]
@@ -117,16 +121,26 @@ def main() -> None:
             "ajuste FONTES_DOMICILIO ou o mapeamento de unidade"
         )
 
-    col_bucket = next(
-        (c for c in ("no_bairro_filtro", "no_bairro", "nu_micro_area") if c in cols), None
+    # Varre TODOS os buckets disponiveis, nao so um. O exp. 02 mostrou que
+    # micro-area e area/equipe passam k=20 isoladas com folgas muito
+    # diferentes (mediana 523 contra 2312), entao o par pode falhar numa e
+    # passar na outra - e e essa comparacao que decide o desenho.
+    CANDIDATOS_BUCKET = ["nu_micro_area", "nu_ine", "no_bairro_filtro"]
+    buckets = [c for c in CANDIDATOS_BUCKET if c in cols]
+    if not buckets:
+        raise SystemExit(f"{fonte} nao tem nenhuma coluna de bucket reconhecida")
+
+    sel_buckets = ", ".join(
+        f'upper(btrim("{c}"::text)) AS b_{i}' for i, c in enumerate(buckets)
     )
-    print(f"  fonte={fonte}  unidade={col_unidade}  bucket={col_bucket}")
+    print(f"  fonte={fonte}  unidade={col_unidade}")
+    print(f"  buckets a varrer: {', '.join(buckets)}")
 
     linhas = consulta(
         conn,
         f"""
         SELECT "{col_unidade}"::text AS unidade,
-               {f'upper(btrim("{col_bucket}"::text))' if col_bucket else "'-'"} AS bucket,
+               {sel_buckets},
                nu_latitude::double precision  AS lat,
                nu_longitude::double precision AS lng
         FROM public."{fonte}"
@@ -140,16 +154,22 @@ def main() -> None:
         raise SystemExit(f"consulta falhou: {linhas['erro']}")
 
     distancias: list[float] = []
-    pares: list[tuple[str, float]] = []
+    pares_por_bucket: dict[str, list[tuple[str, float]]] = {c: [] for c in buckets}
+    por_unidade: dict[str, list[float]] = {}
     sem_unidade = 0
-    for unidade, bucket, lat, lng in linhas:
+    for linha in linhas:
+        unidade = linha[0]
+        vals = linha[1 : 1 + len(buckets)]
+        lat, lng = linha[-2], linha[-1]
         coord = unidades.get(unidade)
         if coord is None:
             sem_unidade += 1
             continue
         d = haversine_m(lat, lng, coord[0], coord[1])
         distancias.append(d)
-        pares.append((bucket, d))
+        for nome, v in zip(buckets, vals):
+            pares_por_bucket[nome].append((v if v is not None else "-", d))
+        por_unidade.setdefault(unidade, []).append(d)
 
     print(f"  domicilios geolocalizados usados: {len(distancias)}")
     if sem_unidade:
@@ -160,7 +180,7 @@ def main() -> None:
     relatorio: dict = {
         "fonte": fonte,
         "coluna_unidade": col_unidade,
-        "coluna_bucket": col_bucket,
+        "buckets_varridos": buckets,
         "unidades_no_csv": len(unidades),
         "domicilios_usados": len(distancias),
         "ignorados_sem_unidade": sem_unidade,
@@ -172,10 +192,49 @@ def main() -> None:
     for k, v in relatorio["distancia_m"].items():
         print(f"  {k}: {v}")
 
-    titulo("k do par (bucket, faixa) por largura de banda")
-    for largura in LARGURAS_M:
+    # Quebra por unidade. Uma UBS geocodificada no lugar errado desloca TODOS
+    # os seus domicilios de uma vez, e boa parte deles cai abaixo do limite de
+    # sanidade - passa pelo filtro de outlier e continua contaminando o k do
+    # par. O sintoma e uma unidade com perfil de distancia destoante das
+    # outras.
+    titulo("Distancia por unidade (uma UBS deslocada aparece aqui)")
+    relatorio["por_unidade"] = {}
+    for unidade in sorted(por_unidade):
+        ds = por_unidade[unidade]
+        q = quantis(ds)
+        lat_u, lng_u = unidades[unidade]
+        fora_bbox = not (-34 <= lat_u <= 6 and -74 <= lng_u <= -28)
+        q["fora_do_bbox_brasil"] = fora_bbox
+        relatorio["por_unidade"][unidade] = q
+        alerta = "  <-- COORDENADA FORA DO BRASIL" if fora_bbox else ""
+        print(
+            f"  {unidade}: n={q['n']:>5}  mediana={q['mediana']:>9}  "
+            f"p95={q['p95']:>10}  max={q['max']:>11}{alerta}"
+        )
+    print("\n  Se uma unidade tem mediana muito acima das outras, a coordenada")
+    print("  dela e a suspeita - nao os domicilios.")
+
+    # Cauda implausivel: num municipio, domicilio a dezenas de km da propria
+    # unidade de vinculo e coordenada errada ou vinculo cruzado, nao
+    # realidade. Esses pontos viram classe de tamanho 1 nas faixas altas e
+    # contaminam o k do par - por isso sao contados e reportados.
+    fora = [d for d in distancias if d > LIMITE_SANIDADE_M]
+    relatorio["fora_do_limite"] = {
+        "limite_m": LIMITE_SANIDADE_M,
+        "n": len(fora),
+        "pct": round(100.0 * len(fora) / len(distancias), 2),
+    }
+    print(
+        f"\n  acima de {LIMITE_SANIDADE_M / 1000:.0f} km: {len(fora)} "
+        f"({relatorio['fora_do_limite']['pct']}%) - provavel erro de coordenada"
+    )
+    if fora:
+        print("  a varredura abaixo roda com e sem esses pontos, para separar")
+        print("  o efeito da largura da banda do efeito do dado sujo.")
+
+    def varre(conjunto: list[tuple[str, float]], largura: int) -> dict:
         classes: dict[tuple[str, int], int] = {}
-        for bucket, d in pares:
+        for bucket, d in conjunto:
             chave = (bucket, int(d // largura))
             classes[chave] = classes.get(chave, 0) + 1
         tamanhos = sorted(classes.values())
@@ -188,9 +247,9 @@ def main() -> None:
         for t in LIMIARES:
             entrada[f"classes_k_menor_{t}"] = sum(1 for n in tamanhos if n < t)
             entrada[f"linhas_k_menor_{t}"] = sum(n for n in tamanhos if n < t)
-        relatorio["larguras"][f"{largura}m"] = entrada
+        return entrada
 
-        print(f"\n  banda de {largura} m")
+    def imprime(entrada: dict) -> None:
         print(
             f"      classes={entrada['n_classes']}  k -> min={entrada['k_min']} "
             f"mediana={entrada['k_mediana']} max={entrada['k_max']}"
@@ -207,6 +266,103 @@ def main() -> None:
             + ": "
             + " / ".join(str(entrada[f"linhas_k_menor_{t}"]) for t in LIMIARES)
         )
+
+    # ---------------------------------------------------------------------
+    # Esquemas de faixa com numero LIMITADO de bandas.
+    #
+    # Largura fixa e a discretizacao errada para uma distribuicao que varre
+    # duas ordens de grandeza (p25=212m, p95=14km): perto da unidade junta
+    # centenas numa classe so, longe deixa cada domicilio sozinho na sua
+    # banda. Limitar o numero de faixas resolve os dois lados.
+    # ---------------------------------------------------------------------
+    def por_cortes_fixos(cortes: list[float]):
+        def atribui(_bucket: str, d: float) -> int:
+            for i, c in enumerate(cortes):
+                if d < c:
+                    return i
+            return len(cortes)
+        return atribui
+
+    def por_quantil(conjunto: list[tuple[str, float]], n: int):
+        agrupado: dict[str, list[float]] = {}
+        for b, d in conjunto:
+            agrupado.setdefault(b, []).append(d)
+        cortes: dict[str, list[float]] = {}
+        for b, ds in agrupado.items():
+            ds.sort()
+            cortes[b] = [ds[max(0, int(len(ds) * i / n) - 1)] for i in range(1, n)]
+
+        def atribui(bucket: str, d: float) -> int:
+            for i, c in enumerate(cortes.get(bucket, [])):
+                if d < c:
+                    return i
+            return n - 1
+        return atribui
+
+    def varre_esquema(conjunto: list[tuple[str, float]], atribui) -> dict:
+        classes: dict[tuple[str, int], int] = {}
+        for bucket, d in conjunto:
+            chave = (bucket, atribui(bucket, d))
+            classes[chave] = classes.get(chave, 0) + 1
+        tamanhos = sorted(classes.values())
+        entrada = {
+            "n_classes": len(tamanhos),
+            "k_min": tamanhos[0],
+            "k_mediana": tamanhos[len(tamanhos) // 2],
+            "k_max": tamanhos[-1],
+        }
+        for t in LIMIARES:
+            entrada[f"classes_k_menor_{t}"] = sum(1 for n in tamanhos if n < t)
+            entrada[f"linhas_k_menor_{t}"] = sum(n for n in tamanhos if n < t)
+        return entrada
+
+    ESQUEMAS = [
+        ("6 faixas fixas (250/500/1k/2.5k/5k)", lambda c: por_cortes_fixos([250, 500, 1000, 2500, 5000])),
+        ("4 faixas fixas (500/1.5k/5k)", lambda c: por_cortes_fixos([500, 1500, 5000])),
+        ("quartis por bucket", lambda c: por_quantil(c, 4)),
+        ("tercis por bucket", lambda c: por_quantil(c, 3)),
+    ]
+
+    titulo("k do par por ESQUEMA de faixa (numero limitado de bandas)")
+    relatorio["esquemas"] = {}
+    for nome_bucket in buckets:
+        limpos = [(b, d) for b, d in pares_por_bucket[nome_bucket] if d <= LIMITE_SANIDADE_M]
+        n_l = len(limpos)
+        relatorio["esquemas"][nome_bucket] = {}
+        print(f"\n  bucket = {nome_bucket}  (n={n_l}, sem outliers)")
+        for rotulo, construtor in ESQUEMAS:
+            e = varre_esquema(limpos, construtor(limpos))
+            pct = 100.0 * e["linhas_k_menor_20"] / n_l if n_l else 0.0
+            e["pct_supressao_k20"] = round(pct, 1)
+            relatorio["esquemas"][nome_bucket][rotulo] = e
+            veredito = "PASSA" if e["k_min"] >= 20 else f"{pct:.1f}% a suprimir"
+            print(
+                f"      {rotulo:36} classes={e['n_classes']:>4}  "
+                f"k_min={e['k_min']:>3}  k_med={e['k_mediana']:>4}  -> {veredito}"
+            )
+
+    relatorio["larguras"] = {}
+    for nome_bucket in buckets:
+        pares = pares_por_bucket[nome_bucket]
+        pares_limpos = [(b, d) for b, d in pares if d <= LIMITE_SANIDADE_M]
+        n_limpos = len(pares_limpos)
+
+        titulo(f"k do par ({nome_bucket}, faixa) por largura de banda")
+        relatorio["larguras"][nome_bucket] = {}
+        for largura in LARGURAS_M:
+            entrada = {"todos": varre(pares, largura)}
+            print(f"\n  banda de {largura} m — todos os pontos")
+            imprime(entrada["todos"])
+
+            if n_limpos < len(pares):
+                lim = varre(pares_limpos, largura)
+                entrada["sem_outliers"] = lim
+                pct = 100.0 * lim["linhas_k_menor_20"] / n_limpos if n_limpos else 0.0
+                print(f"  banda de {largura} m — sem os acima de {LIMITE_SANIDADE_M / 1000:.0f} km")
+                imprime(lim)
+                print(f"      -> {pct:.1f}% das linhas precisariam de supressao")
+
+            relatorio["larguras"][nome_bucket][f"{largura}m"] = entrada
 
     titulo("Como ler")
     print("A menor largura cujo k minimo do par satisfaca o minimo (20) e a")

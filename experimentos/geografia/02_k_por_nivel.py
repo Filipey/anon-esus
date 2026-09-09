@@ -35,7 +35,7 @@ NIVEIS = [
     ("municipio", '"co_localidade_endereco"', ["co_localidade_endereco"]),
 ]
 
-LIMIARES = (2, 5, 10, 20, 50)
+LIMIARES = (2, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100)
 
 BASE = """
     WITH g AS (
@@ -162,6 +162,52 @@ def main() -> None:
                 _mostra(rotulo, d)
 
         relatorio["niveis"][rotulo] = entrada
+
+    # Area/equipe e unidade nao existem como coluna em tb_cidadao - vivem na
+    # tabela de territorio do DW. Sem esta passagem o eixo favorecido era
+    # simplesmente pulado em silencio, que foi o que aconteceu na primeira
+    # rodada.
+    TERRITORIO = "tb_fat_cidadao_territorio"
+    if existe_tabela(conn, TERRITORIO):
+        titulo(f"Niveis do territorio de saude ({TERRITORIO})")
+        cols_t = colunas_de(conn, TERRITORIO)
+        for rotulo, col in (
+            ("micro-area (territorio)", "nu_micro_area"),
+            ("area / equipe", "co_dim_equipe"),
+            ("unidade", "co_dim_unidade_saude"),
+        ):
+            if col not in cols_t:
+                print(f"\n  {rotulo}: sem {col} - pulando")
+                continue
+
+            filtro = f'"{col}" IS NOT NULL'
+            if col.startswith(("no_", "nu_", "ds_")):
+                filtro += f" AND btrim(\"{col}\"::text) <> ''"
+
+            sql = BASE.format(
+                tab=TERRITORIO,
+                bucket=f'"{col}"',
+                extra="",
+                extra_group="",
+                filtro=filtro,
+                filtros_classe=", ".join(
+                    f"count(*) FILTER (WHERE n < {t}) AS classes_k_menor_{t}" for t in LIMIARES
+                ),
+                filtros_linha=", ".join(
+                    f"coalesce(sum(n) FILTER (WHERE n < {t}), 0) AS linhas_k_menor_{t}"
+                    for t in LIMIARES
+                ),
+            )
+            r = uma(conn, sql)
+            print(f"\n  {rotulo}")
+            if isinstance(r, dict):
+                print(f"      erro/timeout -> {r['erro']}")
+                relatorio["niveis"][rotulo] = {"isolado": r}
+                continue
+            d = dict(zip(CAMPOS, r))
+            relatorio["niveis"][rotulo] = {"isolado": d}
+            print("      [k isolado]")
+            _mostra(rotulo, d)
 
     titulo("Como ler")
     print("Escolher o nivel mais fino cujo k isolado satisfaca o minimo (20) e")
