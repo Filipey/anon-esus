@@ -1,14 +1,12 @@
-# Coordenadas das unidades de saude, preenchidas a mao a partir do cadastro
-# publico do CNES. Sao 12 - trabalho de uma vez so.
+# Coordenadas das unidades de saude. Preencher latitude e longitude a mao,
+# a partir do cadastro publico do CNES ou geocodificando o endereco abaixo.
 #
-# IMPORTANTE: preencher ANTES de rodar a 02_anon_unidade_saude.py na base de
-# trabalho, porque ela substitui o nu_cnes usado para consultar o cadastro.
+# Gerado por 00_unidades.py. Endereco de unidade e dado institucional
+# publico - nenhuma coordenada de domicilio ou de cidadao entra aqui.
 #
-# Unidade de saude e entidade institucional de endereco publico - por isso
-# estas coordenadas podem ser versionadas. NENHUMA coordenada de domicilio ou
-# de cidadao deve entrar aqui.
-#
-# co_unidade: o valor que aparece na coluna de unidade da tabela de domicilio
-#             (nu_cnes, co_unidade_saude ou co_dim_unidade_saude - o
-#             03_faixa_de_distancia.py informa qual usou).
-co_unidade,nu_cnes,nome_referencia,latitude,longitude
+# co_unidade: chave como aparece na tabela de domicilio (e a que o
+#             03_faixa_de_distancia.py usa para casar).
+co_unidade,nu_cnes,nome_referencia,endereco_referencia,latitude,longitude
+2380692,2380692,UBS Unidade Basica de Saude Francisco Ildemar de Castro,"RUA PRINCESA ISABEL, 14, CENTRO, 59910000",-6.0932945,-38.3754307
+2380722,2380722,UBS Unidade Basica de Saude Cristalino Leite da Silva,"MEREJO, S/N, ZONA RURAL, 59910000",-6.0936572,-38.3736984
+2380730,2380730,UBS Unidade Basica de Saude Maria Nogueira Neta,"SITIO LAGOA DE DENTRO, S/N, ZONA RURAL, 59910000",-6.0936552,-38.3736870
