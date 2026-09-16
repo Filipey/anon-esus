@@ -879,7 +879,11 @@ def fig_faixas(dados: dict) -> None:
         # estao no centro; na vertical ele sobe e sai de cima delas. Fundo
         # branco porque o texto passa sobre o preenchimento das faixas.
         marcos = [cortes[0] * 0.78, (cortes[0] + cortes[1]) / 2, cortes[1] * 1.13]
-        for d, txt in zip(marcos, ("1º tercil", "2º", "3º")):
+        classes = f.get("classes_n") or []
+        nomes = ("1º tercil", "2º", "3º")
+        if len(classes) == len(nomes):
+            nomes = tuple(f"{nm} · {c}" for nm, c in zip(nomes, classes))
+        for d, txt in zip(marcos, nomes):
             dlat = d / 111_320.0
             ax.text(lng0, lat0 + dlat, txt, fontsize=7.5, color=cor,
                     ha="center", va="center", zorder=6,
@@ -903,8 +907,12 @@ def fig_faixas(dados: dict) -> None:
             (f"{c/1000:.1f} km".replace(".", ",") if c >= 1000 else f"{c:.0f} m")
             for c in cortes
         )
-        ax.set_title(f"{rot} — n={f['n']} · cortes {cortes_txt}",
-                     loc="left", fontsize=9.5, color=cor)
+        # "n=661" era ambiguo: numa figura sobre faixas, lia-se como o tamanho
+        # da faixa. E o tamanho da EQUIPE - as classes publicadas sao os tercos
+        # dela, e e delas que sai o k. O tamanho de cada classe foi para junto
+        # do rotulo da sua faixa, que e onde ele significa alguma coisa.
+        ax.set_title(f"{rot} · {f['n']} domicílios · cortes {cortes_txt}",
+                     loc="left", fontsize=9, color=cor)
         for l in ("top", "right", "bottom", "left"):
             ax.spines[l].set_visible(False)
         ax.set_xticks([]); ax.set_yticks([])
@@ -913,16 +921,17 @@ def fig_faixas(dados: dict) -> None:
         ax.axis("off")
 
     fig.suptitle("A geometria das faixas — e o que ela não mostra",
-                 x=0.012, y=0.985, ha="left", fontsize=12)
+                 x=0.012, y=0.995, ha="left", va="top", fontsize=12)
     fig.text(
         0.012, 0.012,
         "Cada painel é uma equipe, enquadrado no próprio raio externo — as escalas diferem, veja a barra de cada um. "
         "As duas\nlinhas são as fronteiras dos três tercis, não duas equipes. Quadrados: as três unidades, que caem "
         "quase no mesmo\nponto. A equipe não aparece porque não tem geometria na base; os domicílios não entram "
-        "porque o mapa das casas\né o vazamento que suprimimos.",
+        "porque o mapa das casas\né o vazamento que suprimimos. O número ao lado de cada faixa é o tamanho "
+        "da classe publicada.",
         ha="left", va="bottom", fontsize=8, color="0.35", linespacing=1.6,
     )
-    fig.subplots_adjust(top=0.93, bottom=0.14, hspace=0.22, wspace=0.08)
+    fig.subplots_adjust(top=0.90, bottom=0.14, hspace=0.20, wspace=0.20)
     salvar(fig, "faixas")
 
 

@@ -431,15 +431,22 @@ def main() -> None:
     escolhida = "equipe (INE)"
     if distancias and escolhida in candidatos:
         chaves_eq = candidatos[escolhida]
-        _, cortes = tercis_por_grupo(chaves_eq, distancias)
+        faixa_reg, cortes = tercis_por_grupo(chaves_eq, distancias)
         comp: dict[object, Counter] = {}
-        for ch, c in zip(chaves_eq, cnes):
+        por_faixa: dict[object, Counter] = {}
+        for ch, c, fx in zip(chaves_eq, cnes, faixa_reg):
             comp.setdefault(ch, Counter())[str(c)] += 1
+            por_faixa.setdefault(ch, Counter())[fx] += 1
         rel["faixas_da_escolha"] = {}
         for i, ch in enumerate(sorted(cortes, key=str), start=1):
             unidades_ch = comp.get(ch, Counter())
             rel["faixas_da_escolha"][f"equipe {i}"] = {
+                # n e o tamanho da EQUIPE; classes_n sao as classes que vao
+                # publicadas - o terco de cada equipe. E delas que sai o k,
+                # nao de n: a menor equipe tem 220 domicilios e a menor classe
+                # publicada, 72.
                 "n": sum(unidades_ch.values()),
+                "classes_n": [por_faixa.get(ch, Counter()).get(j, 0) for j in range(N_TERCIS)],
                 "cortes_m": [round(x, 1) for x in cortes[ch]],
                 "unidade_principal": unidades_ch.most_common(1)[0][0] if unidades_ch else None,
                 "unidades": dict(unidades_ch.most_common()),
@@ -514,8 +521,9 @@ def main() -> None:
         titulo("Raios de corte dos tercis, por equipe")
         for rot, f in rel["faixas_da_escolha"].items():
             cortes_txt = " / ".join(f"{c:,.0f} m".replace(",", ".") for c in f["cortes_m"])
-            print(f"  {rot:12} n={f['n']:>5}  cortes: {cortes_txt:<24} "
-                  f"unidade {f['unidade_principal']} ({len(f['unidades'])} no total)")
+            classes_txt = " / ".join(str(c) for c in f.get("classes_n", []))
+            print(f"  {rot:12} equipe={f['n']:>5}  classes publicadas: {classes_txt:<16} "
+                  f"cortes: {cortes_txt:<22} unidade {f['unidade_principal']}")
 
     titulo("Como ler")
     print("  compacidade = distância mediana dos domicílios ao centro do grupo.")
