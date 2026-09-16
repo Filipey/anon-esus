@@ -810,34 +810,38 @@ ESTILOS_EQUIPE = ["-", "--", "-.", ":", (0, (3, 1, 1, 1))]
 def fig_faixas(dados: dict) -> None:
     """A geometria das faixas de distancia, sem tocar em domicilio.
 
-    A classe publicada e (equipe, tercil). A metade "equipe" nao tem geometria
-    na base - nao existe malha de area nem de micro-area no e-SUS - entao nao
-    ha regiao para pintar. A metade "tercil" tem: e um anel em torno da
-    unidade, e os raios de corte sao quantis sobre centenas de domicilios.
+    Um painel por equipe, cada um enquadrado no proprio raio externo. A
+    versao anterior punha as quatro num mapa so: os raios vao de centenas de
+    metros a quase dez quilometros, entao os aneis internos sumiam, os
+    externos saiam cortados pela moldura e as duas fronteiras de cada equipe
+    liam-se como duas equipes diferentes.
 
-    Desenhar a partir dos pontos dos domicilios - casco convexo, dispersao
-    colorida - seria publicar o mapa das casas, que e exatamente o que a
-    migration 14 fechou. Esta figura desenha o que da para desenhar com
-    agregado e coordenada institucional publica.
+    O que se pinta sao as FAIXAS, nao as fronteiras - sao tres por equipe, e
+    as duas linhas sao onde uma acaba e a outra comeca.
+
+    A outra metade da classe, a equipe, nao tem geometria na base: nao existe
+    malha de area nem de micro-area no e-SUS. E os domicilios nao entram -
+    casco convexo ou dispersao colorida seria publicar o mapa das casas, que
+    e o vazamento que a migration 14 fechou.
     """
     faixas = dados.get("faixas_da_escolha")
     if not faixas:
         print("  exp. 06 sem raios de corte (rode a versão nova) - figura de faixas pulada")
         return
     unidades = {u["nu_cnes"]: u for u in ler_unidades()}
-    if not unidades:
-        print("  sem coordenadas de unidade - figura de faixas pulada")
-        return
     aneis_mun = aneis_de(AQUI / MALHAS["municipio"])
-    if not aneis_mun:
-        print("  sem malha do município - figura de faixas pulada")
+    if not unidades or not aneis_mun:
+        print("  sem unidades ou sem malha - figura de faixas pulada")
         return
 
-    fig, ax = plt.subplots(figsize=(7.4, 6.2))
-    for anel in aneis_mun:
-        xs, ys = zip(*anel)
-        ax.fill(xs, ys, color="0.93", zorder=0)
-        ax.plot(xs, ys, color="0.45", lw=1.3, zorder=1)
+    itens = [(r, f) for r, f in sorted(faixas.items())
+             if f.get("cortes_m") and unidades.get(str(f.get("unidade_principal")))]
+    if not itens:
+        return
+    ncols = 2
+    nrows = math.ceil(len(itens) / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(7.8, 3.9 * nrows))
+    axes = np.atleast_1d(axes).ravel()
 
     def circulo(lat0, lng0, raio_m, npts=240):
         t = np.linspace(0, 2 * np.pi, npts)
@@ -845,61 +849,80 @@ def fig_faixas(dados: dict) -> None:
         dlng = raio_m / (111_320.0 * math.cos(math.radians(lat0)))
         return lng0 + dlng * np.cos(t), lat0 + dlat * np.sin(t)
 
-    lats_u = [u["lat"] for u in unidades.values()]
-    lngs_u = [u["lng"] for u in unidades.values()]
-    lat0 = sum(lats_u) / len(lats_u)
+    for ax, (rot, f) in zip(axes, itens):
+        u = unidades[str(f["unidade_principal"])]
+        cor = CORES_EQUIPE[itens.index((rot, f)) % len(CORES_EQUIPE)]
+        cortes = f["cortes_m"]
+        lat0, lng0 = u["lat"], u["lng"]
+        aspecto = 1 / math.cos(math.radians(lat0))
 
-    for i, (rot, f) in enumerate(sorted(faixas.items())):
-        u = unidades.get(str(f.get("unidade_principal")))
-        if not u or not f.get("cortes_m"):
-            continue
-        cor = CORES_EQUIPE[i % len(CORES_EQUIPE)]
-        ls = ESTILOS_EQUIPE[i % len(ESTILOS_EQUIPE)]
-        for j, raio in enumerate(f["cortes_m"]):
-            xs, ys = circulo(u["lat"], u["lng"], raio)
-            ax.plot(xs, ys, linestyle=ls, lw=1.6, color=cor, zorder=3,
-                    label=(f"{rot} · n={f['n']}" if j == 0 else None))
-        raios = " / ".join(f"{r/1000:.1f} km".replace(".", ",") for r in f["cortes_m"])
-        ax.plot([], [], " ", label=f"      cortes {raios}")
+        for anel in aneis_mun:
+            xs, ys = zip(*anel)
+            ax.fill(xs, ys, color="0.94", zorder=0)
+            ax.plot(xs, ys, color="0.62", lw=1.0, zorder=1)
 
-    for u in unidades.values():
-        ax.scatter(u["lng"], u["lat"], s=46, color="0.15", marker="s",
-                   edgecolor="white", linewidth=1.1, zorder=5)
-    # As tres unidades caem quase no mesmo pixel; sem a nota, o leitor conta um
-    # quadrado e acha que o mapa esta incompleto.
-    ax.annotate(
-        f"{len(unidades)} unidades,\ntodas a < 200 m",
-        xy=(sum(lngs_u) / len(lngs_u), lat0), xytext=(34, -34),
-        textcoords="offset points", fontsize=8, color="0.2", zorder=6,
-        arrowprops=dict(arrowstyle="-", color="0.4", lw=0.8),
-    )
+        # Faixas, da mais externa para a mais interna: a de fora e pintada
+        # primeiro e a de dentro cobre, senao a interna some.
+        for raio, alpha in zip(reversed(cortes), (0.13, 0.26)):
+            xs, ys = circulo(lat0, lng0, raio)
+            ax.fill(xs, ys, color=cor, alpha=alpha, zorder=2, linewidth=0)
+        for raio in cortes:
+            xs, ys = circulo(lat0, lng0, raio)
+            ax.plot(xs, ys, color=cor, lw=1.5, zorder=3)
 
-    todos_lng = [x for a in aneis_mun for x, _ in a]
-    todos_lat = [y for a in aneis_mun for _, y in a]
-    mx = (max(todos_lng) - min(todos_lng)) * 0.22
-    ax.set_xlim(min(todos_lng) - mx, max(todos_lng) + mx)
-    ax.set_ylim(min(todos_lat) - mx, max(todos_lat) + mx)
-    ax.set_aspect(1 / math.cos(math.radians(lat0)))
-    _barra_de_escala(ax, 2000, lat0, "2 km", y=0.04, x=0.04)
-    for l in ("top", "right", "bottom", "left"):
-        ax.spines[l].set_visible(False)
-    ax.set_xticks([]); ax.set_yticks([])
-    ax.set_title(
-        "A geometria das faixas — e o que ela não mostra",
-        loc="left", fontsize=11,
+        for uu in unidades.values():
+            ax.scatter(uu["lng"], uu["lat"], s=30, color="0.15", marker="s",
+                       edgecolor="white", linewidth=0.9, zorder=5)
+
+        # Rotulo das tres faixas subindo a partir da unidade. Na horizontal o
+        # rotulo da faixa interna caia em cima dos quadrados das unidades, que
+        # estao no centro; na vertical ele sobe e sai de cima delas. Fundo
+        # branco porque o texto passa sobre o preenchimento das faixas.
+        marcos = [cortes[0] * 0.78, (cortes[0] + cortes[1]) / 2, cortes[1] * 1.13]
+        for d, txt in zip(marcos, ("1º tercil", "2º", "3º")):
+            dlat = d / 111_320.0
+            ax.text(lng0, lat0 + dlat, txt, fontsize=7.5, color=cor,
+                    ha="center", va="center", zorder=6,
+                    bbox=dict(facecolor="white", alpha=0.78, edgecolor="none", pad=1.2))
+
+        r_max = cortes[-1] * 1.30
+        dlat = r_max / 111_320.0
+        dlng = r_max / (111_320.0 * math.cos(math.radians(lat0)))
+        ax.set_xlim(lng0 - dlng, lng0 + dlng)
+        ax.set_ylim(lat0 - dlat, lat0 + dlat)
+        ax.set_aspect(aspecto)
+
+        escala = 10 ** math.floor(math.log10(cortes[-1]))
+        if cortes[-1] / escala >= 5:
+            escala *= 2
+        rotulo_escala = (f"{escala/1000:.0f} km" if escala >= 1000
+                         else f"{escala:.0f} m")
+        _barra_de_escala(ax, escala, lat0, rotulo_escala, y=0.05, x=0.05)
+
+        cortes_txt = " · ".join(
+            (f"{c/1000:.1f} km".replace(".", ",") if c >= 1000 else f"{c:.0f} m")
+            for c in cortes
+        )
+        ax.set_title(f"{rot} — n={f['n']} · cortes {cortes_txt}",
+                     loc="left", fontsize=9.5, color=cor)
+        for l in ("top", "right", "bottom", "left"):
+            ax.spines[l].set_visible(False)
+        ax.set_xticks([]); ax.set_yticks([])
+
+    for ax in axes[len(itens):]:
+        ax.axis("off")
+
+    fig.suptitle("A geometria das faixas — e o que ela não mostra",
+                 x=0.012, y=0.985, ha="left", fontsize=12)
+    fig.text(
+        0.012, 0.012,
+        "Cada painel é uma equipe, enquadrado no próprio raio externo — as escalas diferem, veja a barra de cada um. "
+        "As duas\nlinhas são as fronteiras dos três tercis, não duas equipes. Quadrados: as três unidades, que caem "
+        "quase no mesmo\nponto. A equipe não aparece porque não tem geometria na base; os domicílios não entram "
+        "porque o mapa das casas\né o vazamento que suprimimos.",
+        ha="left", va="bottom", fontsize=8, color="0.35", linespacing=1.6,
     )
-    # Os aneis varrem a figura inteira: a legenda precisa de fundo proprio.
-    ax.legend(fontsize=8, loc="upper left", handlelength=2.4, labelspacing=0.35,
-              frameon=True, facecolor="white", edgecolor="0.82", framealpha=0.93)
-    ax.text(
-        0.0, -0.055,
-        "Cada anel é um corte de tercil da equipe, traçado a partir da unidade de vínculo. "
-        "Quadrados: as três unidades.\nA outra metade da classe — a equipe — não aparece porque "
-        "não tem geometria na base: não há malha de área\nnem de micro-área no e-SUS. E os domicílios "
-        "não entram: um mapa das casas é o vazamento que suprimimos.",
-        transform=ax.transAxes, ha="left", va="top", fontsize=8, color="0.35",
-    )
-    fig.subplots_adjust(bottom=0.16)
+    fig.subplots_adjust(top=0.93, bottom=0.14, hspace=0.22, wspace=0.08)
     salvar(fig, "faixas")
 
 
