@@ -19,6 +19,7 @@ Figuras geradas:
   iloss_por_k          supressao E perda de informacao em funcao de k
   mapa_unidades        as unidades geocodificadas sobre o limite do municipio
   criterios            a decisao inteira: quatro criterios, cinco candidatos
+  faixas               geometria dos tercis: aneis em torno de cada unidade
 
 `sensibilidade_k` e a que responde "por que k=20": ela mostra que a escolha
 entre k=2 e k=20 nao muda o resultado na configuracao recomendada, e onde
@@ -801,6 +802,107 @@ def fig_criterios(dados: dict) -> None:
     salvar(fig, "criterios")
 
 
+# ---------------------------------------------------------------- figura 9
+CORES_EQUIPE = ["#2E4057", "#F18F01", "#9E2A2B", "#2A9D8F", "#7E57C2"]
+ESTILOS_EQUIPE = ["-", "--", "-.", ":", (0, (3, 1, 1, 1))]
+
+
+def fig_faixas(dados: dict) -> None:
+    """A geometria das faixas de distancia, sem tocar em domicilio.
+
+    A classe publicada e (equipe, tercil). A metade "equipe" nao tem geometria
+    na base - nao existe malha de area nem de micro-area no e-SUS - entao nao
+    ha regiao para pintar. A metade "tercil" tem: e um anel em torno da
+    unidade, e os raios de corte sao quantis sobre centenas de domicilios.
+
+    Desenhar a partir dos pontos dos domicilios - casco convexo, dispersao
+    colorida - seria publicar o mapa das casas, que e exatamente o que a
+    migration 14 fechou. Esta figura desenha o que da para desenhar com
+    agregado e coordenada institucional publica.
+    """
+    faixas = dados.get("faixas_da_escolha")
+    if not faixas:
+        print("  exp. 06 sem raios de corte (rode a versão nova) - figura de faixas pulada")
+        return
+    unidades = {u["nu_cnes"]: u for u in ler_unidades()}
+    if not unidades:
+        print("  sem coordenadas de unidade - figura de faixas pulada")
+        return
+    aneis_mun = aneis_de(AQUI / MALHAS["municipio"])
+    if not aneis_mun:
+        print("  sem malha do município - figura de faixas pulada")
+        return
+
+    fig, ax = plt.subplots(figsize=(7.4, 6.2))
+    for anel in aneis_mun:
+        xs, ys = zip(*anel)
+        ax.fill(xs, ys, color="0.93", zorder=0)
+        ax.plot(xs, ys, color="0.45", lw=1.3, zorder=1)
+
+    def circulo(lat0, lng0, raio_m, npts=240):
+        t = np.linspace(0, 2 * np.pi, npts)
+        dlat = raio_m / 111_320.0
+        dlng = raio_m / (111_320.0 * math.cos(math.radians(lat0)))
+        return lng0 + dlng * np.cos(t), lat0 + dlat * np.sin(t)
+
+    lats_u = [u["lat"] for u in unidades.values()]
+    lngs_u = [u["lng"] for u in unidades.values()]
+    lat0 = sum(lats_u) / len(lats_u)
+
+    for i, (rot, f) in enumerate(sorted(faixas.items())):
+        u = unidades.get(str(f.get("unidade_principal")))
+        if not u or not f.get("cortes_m"):
+            continue
+        cor = CORES_EQUIPE[i % len(CORES_EQUIPE)]
+        ls = ESTILOS_EQUIPE[i % len(ESTILOS_EQUIPE)]
+        for j, raio in enumerate(f["cortes_m"]):
+            xs, ys = circulo(u["lat"], u["lng"], raio)
+            ax.plot(xs, ys, linestyle=ls, lw=1.6, color=cor, zorder=3,
+                    label=(f"{rot} · n={f['n']}" if j == 0 else None))
+        raios = " / ".join(f"{r/1000:.1f} km".replace(".", ",") for r in f["cortes_m"])
+        ax.plot([], [], " ", label=f"      cortes {raios}")
+
+    for u in unidades.values():
+        ax.scatter(u["lng"], u["lat"], s=46, color="0.15", marker="s",
+                   edgecolor="white", linewidth=1.1, zorder=5)
+    # As tres unidades caem quase no mesmo pixel; sem a nota, o leitor conta um
+    # quadrado e acha que o mapa esta incompleto.
+    ax.annotate(
+        f"{len(unidades)} unidades,\ntodas a < 200 m",
+        xy=(sum(lngs_u) / len(lngs_u), lat0), xytext=(34, -34),
+        textcoords="offset points", fontsize=8, color="0.2", zorder=6,
+        arrowprops=dict(arrowstyle="-", color="0.4", lw=0.8),
+    )
+
+    todos_lng = [x for a in aneis_mun for x, _ in a]
+    todos_lat = [y for a in aneis_mun for _, y in a]
+    mx = (max(todos_lng) - min(todos_lng)) * 0.22
+    ax.set_xlim(min(todos_lng) - mx, max(todos_lng) + mx)
+    ax.set_ylim(min(todos_lat) - mx, max(todos_lat) + mx)
+    ax.set_aspect(1 / math.cos(math.radians(lat0)))
+    _barra_de_escala(ax, 2000, lat0, "2 km", y=0.04, x=0.04)
+    for l in ("top", "right", "bottom", "left"):
+        ax.spines[l].set_visible(False)
+    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_title(
+        "A geometria das faixas — e o que ela não mostra",
+        loc="left", fontsize=11,
+    )
+    # Os aneis varrem a figura inteira: a legenda precisa de fundo proprio.
+    ax.legend(fontsize=8, loc="upper left", handlelength=2.4, labelspacing=0.35,
+              frameon=True, facecolor="white", edgecolor="0.82", framealpha=0.93)
+    ax.text(
+        0.0, -0.055,
+        "Cada anel é um corte de tercil da equipe, traçado a partir da unidade de vínculo. "
+        "Quadrados: as três unidades.\nA outra metade da classe — a equipe — não aparece porque "
+        "não tem geometria na base: não há malha de área\nnem de micro-área no e-SUS. E os domicílios "
+        "não entram: um mapa das casas é o vazamento que suprimimos.",
+        transform=ax.transAxes, ha="left", va="top", fontsize=8, color="0.35",
+    )
+    fig.subplots_adjust(bottom=0.16)
+    salvar(fig, "faixas")
+
+
 def main() -> None:
     set_latex_style()
     print(f"Lendo resultados de {RESULTADOS.relative_to(RAIZ)}\n")
@@ -820,6 +922,7 @@ def main() -> None:
         fig_agrupamentos(exp06)
         fig_iloss_por_k(exp06)
         fig_criterios(exp06)
+        fig_faixas(exp06)
 
     fig_mapa_unidades()
 

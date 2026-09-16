@@ -265,7 +265,13 @@ def avaliar(nome, chaves, pts: np.ndarray, urbano, tercis=None) -> dict:
 
 
 def tercis_por_grupo(chaves, distancias, n=N_TERCIS):
-    """Faixa por quantil dentro de cada agrupamento."""
+    """Faixa por quantil dentro de cada agrupamento.
+
+    Devolve (faixa_por_registro, raios_de_corte_por_grupo). Os raios sao
+    quantis sobre todos os domicilios do grupo - agregado, como qualquer
+    outro quantil que este experimento emite - e sao o que permite desenhar
+    a geometria das faixas sem tocar em coordenada de domicilio.
+    """
     por_grupo: dict[object, list[float]] = {}
     for ch, d in zip(chaves, distancias):
         por_grupo.setdefault(ch, []).append(d)
@@ -281,7 +287,7 @@ def tercis_por_grupo(chaves, distancias, n=N_TERCIS):
                 faixa = i
                 break
         saida.append(faixa)
-    return saida
+    return saida, cortes
 
 
 def carregar_unidades() -> dict[str, tuple[float, float]]:
@@ -405,7 +411,7 @@ def main() -> None:
     print(cab)
     print("  " + "-" * (len(cab) - 2))
     for nome, chaves in candidatos.items():
-        tercis = tercis_por_grupo(chaves, distancias) if distancias else None
+        tercis = tercis_por_grupo(chaves, distancias)[0] if distancias else None
         m = avaliar(nome, chaves, pts, urbano, tercis)
         rel["agrupamentos"][nome] = m
         comp = f"{m['compacidade_mediana_m']:.0f} m" if m["compacidade_mediana_m"] else "—"
@@ -415,6 +421,29 @@ def main() -> None:
             f"  {nome:30} {m['n_grupos']:>7} {m['tamanho_min']:>6} "
             f"{comp:>9} {pur:>7} {m['iloss']:>7.4f} {prec:>6}"
         )
+
+    # Geometria das faixas da configuracao escolhida, para a figura de mapa.
+    #
+    # O rotulo da equipe e um indice anonimo: o INE real nao entra no
+    # resultado, que e arquivo compartilhavel. O CNES entra porque unidade de
+    # saude e entidade institucional publica - e a mesma razao pela qual o CSV
+    # de coordenadas pode ser versionado.
+    escolhida = "equipe (INE)"
+    if distancias and escolhida in candidatos:
+        chaves_eq = candidatos[escolhida]
+        _, cortes = tercis_por_grupo(chaves_eq, distancias)
+        comp: dict[object, Counter] = {}
+        for ch, c in zip(chaves_eq, cnes):
+            comp.setdefault(ch, Counter())[str(c)] += 1
+        rel["faixas_da_escolha"] = {}
+        for i, ch in enumerate(sorted(cortes, key=str), start=1):
+            unidades_ch = comp.get(ch, Counter())
+            rel["faixas_da_escolha"][f"equipe {i}"] = {
+                "n": sum(unidades_ch.values()),
+                "cortes_m": [round(x, 1) for x in cortes[ch]],
+                "unidade_principal": unidades_ch.most_common(1)[0][0] if unidades_ch else None,
+                "unidades": dict(unidades_ch.most_common()),
+            }
 
     titulo("Qualidade de coordenada")
     cont_xy = Counter(tuple(np.round(q, 1)) for q in pts)
@@ -480,6 +509,13 @@ def main() -> None:
                 f"  {nome:30} classes={m['par_n_classes']:>4} "
                 f"k_mín={m['par_k_min']:>4}  ILoss={m['par_iloss']:.4f}  ->  {veredito}"
             )
+
+    if rel.get("faixas_da_escolha"):
+        titulo("Raios de corte dos tercis, por equipe")
+        for rot, f in rel["faixas_da_escolha"].items():
+            cortes_txt = " / ".join(f"{c:,.0f} m".replace(",", ".") for c in f["cortes_m"])
+            print(f"  {rot:12} n={f['n']:>5}  cortes: {cortes_txt:<24} "
+                  f"unidade {f['unidade_principal']} ({len(f['unidades'])} no total)")
 
     titulo("Como ler")
     print("  compacidade = distância mediana dos domicílios ao centro do grupo.")
