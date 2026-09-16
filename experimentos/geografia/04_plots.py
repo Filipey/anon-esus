@@ -17,6 +17,8 @@ Figuras geradas:
   sensibilidade_k      supressao em funcao de k, por configuracao
   agrupamentos         compacidade contra supressao, por agrupamento candidato
   iloss_por_k          supressao E perda de informacao em funcao de k
+  mapa_unidades        as unidades geocodificadas sobre o limite do municipio
+  criterios            a decisao inteira: quatro criterios, cinco candidatos
 
 `sensibilidade_k` e a que responde "por que k=20": ela mostra que a escolha
 entre k=2 e k=20 nao muda o resultado na configuracao recomendada, e onde
@@ -32,7 +34,9 @@ k aperta, porque a perda migra de generalizacao para supressao.
 
 from __future__ import annotations
 
+import csv
 import json
+import math
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +51,13 @@ PALETA_AGRUPAMENTO = {
     "MDAV k=20": ("#2A9D8F", "-.", "^"),
     "MDAV k=20 estratificado": ("#7E57C2", (0, (3, 1, 1, 1)), "v"),
 }
+
+CSV_UNIDADES_NOME = "unidades_coordenadas.csv"
+MALHAS = {
+    "municipio": "malhas/municipio_2403202.geojson",   # Doutor Severiano / RN
+    "uf": "malhas/uf_24.geojson",                      # Rio Grande do Norte
+}
+MUNICIPIO = "Doutor Severiano — RN"
 
 AQUI = Path(__file__).resolve().parent
 RAIZ = AQUI.parents[1]
@@ -91,6 +102,53 @@ def salvar(fig, stem: str) -> None:
     fig.savefig(caminho.with_suffix(".png"))
     plt.close(fig)
     print(f"  -> {caminho.relative_to(RAIZ)}  (+ .png)")
+
+
+def haversine_m(lat1, lng1, lat2, lng2) -> float:
+    r = 6_371_000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = math.radians(lat2 - lat1), math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def ler_unidades() -> list[dict]:
+    """Le o CSV de coordenadas, descartando os comentarios do cabecalho.
+
+    O arquivo comeca com linhas `#` de procedencia. Entregar isso direto ao
+    DictReader faz a primeira delas virar cabecalho e todo campo voltar None -
+    erro que ja aconteceu uma vez e nao avisa, so devolve nada.
+    """
+    caminho = AQUI / CSV_UNIDADES_NOME
+    if not caminho.exists():
+        return []
+    linhas = [
+        ln for ln in caminho.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+    saida = []
+    for r in csv.DictReader(linhas):
+        try:
+            r["lat"] = float(r["latitude"])
+            r["lng"] = float(r["longitude"])
+        except (TypeError, ValueError):
+            continue  # unidade ainda nao geocodificada
+        saida.append(r)
+    return saida
+
+
+def aneis_de(caminho: Path) -> list[list[tuple[float, float]]]:
+    """Extrai os aneis externos de um GeoJSON, seja Polygon ou MultiPolygon."""
+    if not caminho.exists():
+        return []
+    geo = json.loads(caminho.read_text(encoding="utf-8"))
+    aneis = []
+    for feat in geo.get("features", []):
+        g = feat["geometry"]
+        partes = [g["coordinates"]] if g["type"] == "Polygon" else g["coordinates"]
+        for poly in partes:
+            aneis.append([(x, y) for x, y in poly[0]])
+    return aneis
 
 
 def limiares_de(entrada: dict) -> list[int]:
@@ -472,6 +530,264 @@ def fig_iloss_por_k(dados: dict) -> None:
     salvar(fig, "iloss_por_k")
 
 
+# ---------------------------------------------------------------- figura 7
+def _barra_de_escala(ax, metros, lat0, rotulo, y=0.06, x=0.06):
+    """Barra de escala em graus, convertidos na latitude do mapa."""
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    grau = metros / (111_320 * math.cos(math.radians(lat0)))
+    xa = x0 + (x1 - x0) * x
+    ya = y0 + (y1 - y0) * y
+    ax.plot([xa, xa + grau], [ya, ya], color="0.25", lw=2, solid_capstyle="butt")
+    ax.text(xa + grau / 2, ya + (y1 - y0) * 0.022, rotulo,
+            ha="center", va="bottom", fontsize=7.5, color="0.25")
+
+
+def fig_mapa_unidades() -> None:
+    """As tres unidades geocodificadas sobre o limite do municipio.
+
+    A figura existe por causa de um achado: as duas unidades de endereco
+    rural ("S/N, ZONA RURAL") cairam a 1,3 m uma da outra, no centro da
+    cidade - assinatura de geocodificador que nao resolve endereco rural e
+    devolve o centroide da localidade. Num municipio de ~14 km de lado e 56%
+    rural, isso desloca a distancia domicilio -> unidade de toda a parte
+    rural da base, e e a distancia que define o tercil publicado.
+
+    Nenhuma coordenada de domicilio ou de cidadao entra aqui: so as tres
+    unidades, que sao entidade institucional de endereco publico.
+    """
+    unidades = ler_unidades()
+    if not unidades:
+        print("  sem coordenadas em unidades_coordenadas.csv - mapa pulado")
+        return
+    aneis_mun = aneis_de(AQUI / MALHAS["municipio"])
+    if not aneis_mun:
+        print("  sem malha do município em malhas/ - mapa pulado")
+        return
+    aneis_uf = aneis_de(AQUI / MALHAS["uf"])
+
+    lat0 = sum(u["lat"] for u in unidades) / len(unidades)
+    lng0 = sum(u["lng"] for u in unidades) / len(unidades)
+    aspecto = 1 / math.cos(math.radians(lat0))
+
+    # Quem e suspeito: endereco sem numero em zona rural nao geocodifica.
+    def suspeita(u):
+        end = (u.get("endereco_referencia") or "").upper()
+        return "ZONA RURAL" in end or "S/N" in end
+
+    fig = plt.figure(figsize=(7.8, 4.8))
+    gs = fig.add_gridspec(2, 2, width_ratios=[1.55, 1], height_ratios=[1.15, 1],
+                          wspace=0.16, hspace=0.28)
+    ax = fig.add_subplot(gs[:, 0])
+    ax_zoom = fig.add_subplot(gs[0, 1])
+    ax_loc = fig.add_subplot(gs[1, 1])
+
+    # ------------------------------------------------------------ principal
+    for anel in aneis_mun:
+        xs, ys = zip(*anel)
+        ax.fill(xs, ys, color=COLOR_PRIMARY, alpha=0.07, zorder=0)
+        ax.plot(xs, ys, color=COLOR_PRIMARY, lw=1.4, zorder=1)
+
+    for u in unidades:
+        cor = COLOR_RISK if suspeita(u) else COLOR_PRIMARY
+        ax.scatter(u["lng"], u["lat"], s=52, color=cor, marker="o",
+                   edgecolor="white", linewidth=1.2, zorder=4)
+
+    todos_lng = [x for a in aneis_mun for x, _ in a]
+    todos_lat = [y for a in aneis_mun for _, y in a]
+    mx = (max(todos_lng) - min(todos_lng)) * 0.06
+    ax.set_xlim(min(todos_lng) - mx, max(todos_lng) + mx)
+    ax.set_ylim(min(todos_lat) - mx, max(todos_lat) + mx)
+    ax.set_aspect(aspecto)
+
+    # Retangulo que marca o recorte ampliado ao lado.
+    lado = 0.010
+    ax.add_patch(plt.Rectangle(
+        (lng0 - lado / 2, lat0 - lado / 2 * aspecto), lado, lado * aspecto,
+        fill=False, ec="0.35", lw=0.9, ls="--", zorder=5,
+    ))
+    # A leste do recorte o limite do municipio passa rente; o rotulo vai para
+    # dentro do poligono, onde ha espaco livre.
+    ax.annotate("as três unidades", xy=(lng0 - lado / 2, lat0), xytext=(-10, 20),
+                textcoords="offset points", fontsize=8, color="0.3", ha="right",
+                arrowprops=dict(arrowstyle="-", color="0.5", lw=0.8))
+
+    largura_km = haversine_m(lat0, min(todos_lng), lat0, max(todos_lng)) / 1000
+    _barra_de_escala(ax, 2000, lat0, "2 km")
+    ax.set_title(f"{MUNICIPIO} — {largura_km:.0f} km de leste a oeste",
+                 loc="left", fontsize=10.5)
+    for lado_ in ("top", "right", "bottom", "left"):
+        ax.spines[lado_].set_visible(False)
+    ax.set_xticks([]); ax.set_yticks([])
+
+    # ----------------------------------------------------------------- zoom
+    meio = 0.0022
+    ax_zoom.set_xlim(lng0 - meio, lng0 + meio)
+    ax_zoom.set_ylim(lat0 - meio / aspecto, lat0 + meio / aspecto)
+    ax_zoom.set_aspect(aspecto)
+    for anel in aneis_mun:
+        xs, ys = zip(*anel)
+        ax_zoom.plot(xs, ys, color=COLOR_PRIMARY, lw=1.2)
+    for u in unidades:
+        cor = COLOR_RISK if suspeita(u) else COLOR_PRIMARY
+        ax_zoom.scatter(u["lng"], u["lat"], s=90, color=cor, marker="o",
+                        edgecolor="white", linewidth=1.4, zorder=4, alpha=0.85)
+
+    par = [u for u in unidades if suspeita(u)]
+    if len(par) >= 2:
+        d = haversine_m(par[0]["lat"], par[0]["lng"], par[1]["lat"], par[1]["lng"])
+        ax_zoom.annotate(
+            f"{len(par)} unidades rurais\na {d:.1f} m uma da outra",
+            xy=(par[0]["lng"], par[0]["lat"]), xytext=(10, -26),
+            textcoords="offset points", fontsize=7.5, color=COLOR_RISK,
+            arrowprops=dict(arrowstyle="-", color=COLOR_RISK, lw=0.8),
+        )
+    urbana = [u for u in unidades if not suspeita(u)]
+    if urbana:
+        ax_zoom.annotate(
+            "unidade com\nendereço numerado",
+            xy=(urbana[0]["lng"], urbana[0]["lat"]), xytext=(-6, 20),
+            textcoords="offset points", fontsize=7.5, color=COLOR_PRIMARY,
+            ha="right",
+            arrowprops=dict(arrowstyle="-", color=COLOR_PRIMARY, lw=0.8),
+        )
+    _barra_de_escala(ax_zoom, 100, lat0, "100 m", y=0.05, x=0.05)
+    ax_zoom.set_title("recorte: 500 m de lado", loc="left", fontsize=9)
+    for lado_ in ("top", "right", "bottom", "left"):
+        ax_zoom.spines[lado_].set_visible(False)
+    ax_zoom.set_xticks([]); ax_zoom.set_yticks([])
+
+    # ------------------------------------------------------------ localizador
+    for anel in aneis_uf:
+        xs, ys = zip(*anel)
+        ax_loc.fill(xs, ys, color="0.88", zorder=0)
+        ax_loc.plot(xs, ys, color="0.6", lw=0.8, zorder=1)
+    ax_loc.scatter([lng0], [lat0], s=26, color=COLOR_RISK, zorder=3,
+                   edgecolor="white", linewidth=0.9)
+    ax_loc.set_aspect(aspecto)
+    ax_loc.set_title("Rio Grande do Norte", loc="left", fontsize=9)
+    for lado_ in ("top", "right", "bottom", "left"):
+        ax_loc.spines[lado_].set_visible(False)
+    ax_loc.set_xticks([]); ax_loc.set_yticks([])
+
+    fig.text(
+        0.5, 0.005,
+        "Endereço rural sem número não geocodifica: o serviço devolve o centroide da localidade. "
+        "As três unidades\nficam a menos de 200 m entre si num município de ~14 km de lado e 56% "
+        "rural — e é dessa coordenada que sai o tercil.",
+        ha="center", fontsize=7.8, color="0.35",
+    )
+    fig.subplots_adjust(bottom=0.13)
+    salvar(fig, "mapa_unidades")
+
+
+# ---------------------------------------------------------------- figura 8
+#
+# Os dois portoes sao qualitativos e vem dos experimentos 05 e 06; ficam
+# explicitos aqui porque sao exatamente o que as curvas de custo NAO mostram.
+#
+#   territorio real  o agrupamento corresponde a um lugar unico, e aninha na
+#                    hierarquia de generalizacao do endereco. Micro-area
+#                    reprova: o codigo e reaproveitado entre equipes, a pureza
+#                    urbano/rural e 0,652 e Prec e indefinivel. MDAV reprova
+#                    por outro motivo - "cluster 7" nao e entidade nenhuma,
+#                    e a hierarquia dele e derivada das coordenadas.
+#   k do par         k >= 20 na classe (agrupamento, tercil), que e o que
+#                    efetivamente vai publicado.
+#
+PORTOES = {
+    #                               território real, k do par, motivo da reprova
+    "equipe (INE)":              (True,  True,  ""),
+    "par (equipe, micro-área)":  (True,  False, "k mín 2 — só passa suprimindo"),
+    "micro-área só":             (False, False, "código reusado · pureza 0,652 · Prec —"),
+    "MDAV k=20":                 (False, False, "cluster sem referente · Prec —"),
+    "MDAV k=20 estratificado":   (False, False, "cluster sem referente · Prec —"),
+}
+
+COLUNAS = [
+    (0.010, "candidato"),
+    (0.365, "território\nreal?"),
+    (0.495, "k ≥ 20\nno par?"),
+    (0.630, "a suprimir\nem k=20"),
+    (0.755, "ILoss\nem k=20"),
+    (0.890, "raio\nrevelado"),
+]
+
+
+def fig_criterios(dados: dict) -> None:
+    """A decisao inteira numa figura: dois portões, depois três custos.
+
+    As curvas de custo nao conseguem mostrar a escolha porque, nos dois eixos
+    de custo isolados, quem vence em k=20 e micro-area - 0,1% a suprimir e
+    ILoss 0,043, melhor que a equipe nos dois. Ela e eliminada por um criterio
+    que nao esta em nenhum dos eixos: nao e um lugar. Esta figura poe o
+    criterio de volta.
+    """
+    ag = dados.get("agrupamentos")
+    if not ag or not dados.get("com_tercil"):
+        print("  exp. 06 sem tercil - figura de critérios pulada")
+        return
+    n = dados["domicilios"]
+
+    ordem = [k for k in PORTOES if k in ag]
+    fig, ax = plt.subplots(figsize=(8.8, 3.9))
+    ax.set_xlim(0, 1); ax.set_ylim(-0.30, len(ordem) + 1.55)
+    ax.axis("off")
+
+    topo = len(ordem) + 0.62
+    for x, rot in COLUNAS:
+        ax.text(x, topo, rot, fontsize=8.5, color="0.35", va="bottom",
+                ha="left" if x < 0.2 else "center", linespacing=1.5)
+    ax.plot([0, 1], [topo - 0.16, topo - 0.16], color="0.7", lw=0.9)
+
+    for i, nome in enumerate(ordem):
+        m = ag[nome]
+        y = len(ordem) - 1 - i + 0.30
+        lugar, passa, motivo = PORTOES[nome]
+        vence = lugar and passa
+
+        if vence:
+            ax.add_patch(plt.Rectangle((-0.004, y - 0.34), 1.008, 0.78,
+                                       color=COLOR_PRIMARY, alpha=0.08, zorder=0))
+        tinta = COLOR_PRIMARY if vence else "0.45"
+
+        ax.text(COLUNAS[0][0], y + 0.06, nome, fontsize=9, color=tinta,
+                fontweight="bold" if vence else "normal", va="center")
+        if motivo:
+            ax.text(COLUNAS[0][0], y - 0.26, motivo, fontsize=7.3, color="0.55", va="center")
+
+        for x, ok in ((COLUNAS[1][0], lugar), (COLUNAS[2][0], passa)):
+            cor = COLOR_PRIMARY if ok else COLOR_RISK
+            ax.add_patch(plt.Rectangle((x - 0.042, y - 0.14), 0.084, 0.40,
+                                       color=cor, alpha=0.14, zorder=1))
+            ax.text(x, y + 0.06, "sim" if ok else "não", fontsize=9, color=cor,
+                    ha="center", va="center", fontweight="bold", zorder=2)
+
+        sup = 100 * m["par_linhas_k_menor_20"] / n
+        vals = [
+            (COLUNAS[3][0], f"{sup:.1f}%".replace(".", ",")),
+            (COLUNAS[4][0], f"{m['par_iloss_k_20']:.3f}".replace(".", ",")),
+            (COLUNAS[5][0], f"{m['compacidade_mediana_m']:,.0f} m".replace(",", ".")),
+        ]
+        for x, txt in vals:
+            ax.text(x, y + 0.06, txt, fontsize=9, color=tinta, ha="center", va="center")
+
+    ax.plot([0, 1], [-0.08, -0.08], color="0.7", lw=0.9)
+    ax.text(
+        0.0, -0.46,
+        "Os dois portões decidem; as três colunas de custo só comparam quem passou nos dois. "
+        "Isolados, os custos escolheriam\nerrado: em k = 20 micro-área suprime 0,1% com ILoss 0,043 — "
+        "melhor que a equipe nos dois — e mesmo assim está fora,\nporque o código é reaproveitado entre "
+        "equipes e o agrupamento não corresponde a um lugar.",
+        fontsize=8, color="0.35", va="top", linespacing=1.6,
+    )
+    ax.set_title(
+        "A decisão: dois portões eliminam, três custos comparam o que sobra",
+        loc="left", fontsize=11, pad=14,
+    )
+    salvar(fig, "criterios")
+
+
 def main() -> None:
     set_latex_style()
     print(f"Lendo resultados de {RESULTADOS.relative_to(RAIZ)}\n")
@@ -490,6 +806,9 @@ def main() -> None:
     if exp06:
         fig_agrupamentos(exp06)
         fig_iloss_por_k(exp06)
+        fig_criterios(exp06)
+
+    fig_mapa_unidades()
 
     print(f"\nFiguras em {SAIDA.relative_to(RAIZ)}/ (.pdf para o texto, .png para slides)")
     print(f"gerado em {datetime.now():%Y-%m-%d %H:%M}")
