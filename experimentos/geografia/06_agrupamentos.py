@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import csv
 import math
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -235,6 +236,22 @@ def avaliar(nome, chaves, pts: np.ndarray, urbano, tercis=None) -> dict:
         # E a segunda grandeza do problema: k limita quantos candidatos, nao
         # quanta localizacao. Publicar o k sem este numero e responder metade da
         # pergunta - a mesma objecao que derrubou o MDAV, aplicada a escolha.
+        # Dispersao 0 nao quer dizer "classe compacta": quer dizer que mais da
+        # metade dos domicilios dela esta na MESMA coordenada, porque o centro
+        # robusto cai nesse ponto e a distancia mediana ate ele vira zero.
+        # Distinguir co-localizacao real de coordenada duplicada precisa contar
+        # pontos distintos, nao so medir dispersao.
+        distintos, modais = [], []
+        for v in pares.values():
+            cont = Counter(tuple(np.round(pts[i], 1)) for i in v)
+            distintos.append(len(cont))
+            modais.append(cont.most_common(1)[0][1] / len(v))
+        distintos.sort(); modais.sort()
+        out["par_pontos_distintos_mediana"] = distintos[len(distintos) // 2]
+        out["par_pontos_distintos_min"] = distintos[0]
+        out["par_fracao_modal_mediana"] = round(modais[len(modais) // 2], 3)
+        out["par_fracao_modal_pior"] = round(modais[-1], 3)
+
         disp_par = [d for v in pares.values() if (d := dispersao(pts[v])) is not None]
         if disp_par:
             disp_par.sort()
@@ -399,6 +416,29 @@ def main() -> None:
             f"{comp:>9} {pur:>7} {m['iloss']:>7.4f} {prec:>6}"
         )
 
+    titulo("Qualidade de coordenada")
+    cont_xy = Counter(tuple(np.round(q, 1)) for q in pts)
+    n = len(pts)
+    em_dup = sum(c for c in cont_xy.values() if c > 1)
+    maiores = cont_xy.most_common(5)
+    rel["coordenada"] = {
+        "domicilios": n,
+        "pontos_distintos": len(cont_xy),
+        "em_ponto_repetido": em_dup,
+        "em_ponto_repetido_pct": round(100.0 * em_dup / n, 1),
+        "maior_aglomerado": maiores[0][1],
+        "cinco_maiores": [c for _, c in maiores],
+    }
+    print(f"  domicílios ................... {n}")
+    print(f"  coordenadas distintas ........ {len(cont_xy)}")
+    print(f"  em coordenada repetida ....... {em_dup} ({100.0 * em_dup / n:.1f}%)")
+    print(f"  maiores blocos idênticos ..... {', '.join(str(c) for _, c in maiores)}")
+    if em_dup:
+        print("\n  >>> Dispersão 0 m numa classe significa que mais da metade dela")
+        print("  >>> está num único ponto — co-localização real ou coordenada")
+        print("  >>> duplicada no cadastro. São coisas diferentes e mudam a leitura:")
+        print("  >>> co-localização é geografia; duplicata é ausência de geografia.")
+
     if distancias:
         titulo("Extensão espacial da classe publicada")
         print("  O tercil corta o território em anéis: a célula publicada é menor")
@@ -414,6 +454,18 @@ def main() -> None:
                 f"{m['par_compacidade_mediana_m']:>11.0f} m "
                 f"{m['par_compacidade_min_m']:>9.0f} m"
             )
+        print()
+        cab3 = f"  {'agrupamento':30} {'pontos distintos':>17} {'no ponto modal':>16}"
+        print(cab3)
+        print("  " + "-" * (len(cab3) - 2))
+        for nome, m in rel["agrupamentos"].items():
+            if m.get("par_pontos_distintos_mediana") is None:
+                continue
+            print(
+                f"  {nome:30} {m['par_pontos_distintos_mediana']:>10} (mín {m['par_pontos_distintos_min']:>3}) "
+                f"{100 * m['par_fracao_modal_mediana']:>9.0f}% (pior {100 * m['par_fracao_modal_pior']:.0f}%)"
+            )
+
         esc = rel["agrupamentos"].get("equipe (INE)", {})
         if esc.get("par_compacidades_m"):
             print(f"\n  classes publicadas da escolha, da mais fina à mais larga:")
