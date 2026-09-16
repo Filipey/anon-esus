@@ -874,21 +874,6 @@ def fig_faixas(dados: dict) -> None:
             ax.scatter(uu["lng"], uu["lat"], s=30, color="0.15", marker="s",
                        edgecolor="white", linewidth=0.9, zorder=5)
 
-        # Rotulo das tres faixas subindo a partir da unidade. Na horizontal o
-        # rotulo da faixa interna caia em cima dos quadrados das unidades, que
-        # estao no centro; na vertical ele sobe e sai de cima delas. Fundo
-        # branco porque o texto passa sobre o preenchimento das faixas.
-        marcos = [cortes[0] * 0.78, (cortes[0] + cortes[1]) / 2, cortes[1] * 1.13]
-        classes = f.get("classes_n") or []
-        nomes = ("1º tercil", "2º", "3º")
-        if len(classes) == len(nomes):
-            nomes = tuple(f"{nm} · {c}" for nm, c in zip(nomes, classes))
-        for d, txt in zip(marcos, nomes):
-            dlat = d / 111_320.0
-            ax.text(lng0, lat0 + dlat, txt, fontsize=7.5, color=cor,
-                    ha="center", va="center", zorder=6,
-                    bbox=dict(facecolor="white", alpha=0.78, edgecolor="none", pad=1.2))
-
         r_max = cortes[-1] * 1.30
         dlat = r_max / 111_320.0
         dlng = r_max / (111_320.0 * math.cos(math.radians(lat0)))
@@ -907,12 +892,17 @@ def fig_faixas(dados: dict) -> None:
             (f"{c/1000:.1f} km".replace(".", ",") if c >= 1000 else f"{c:.0f} m")
             for c in cortes
         )
-        # "n=661" era ambiguo: numa figura sobre faixas, lia-se como o tamanho
-        # da faixa. E o tamanho da EQUIPE - as classes publicadas sao os tercos
-        # dela, e e delas que sai o k. O tamanho de cada classe foi para junto
-        # do rotulo da sua faixa, que e onde ele significa alguma coisa.
-        ax.set_title(f"{rot} · {f['n']} domicílios · cortes {cortes_txt}",
-                     loc="left", fontsize=9, color=cor)
+        # O numero da equipe e o das classes ficam no titulo, nao no mapa: os
+        # rotulos dentro do desenho poluiam mais do que informavam. A distincao
+        # entre os dois continua explicita, porque e dela que sai o k - a menor
+        # equipe tem 220 domicilios e a menor classe publicada, 72.
+        classes = f.get("classes_n") or []
+        linha2 = (" · ".join(str(c) for c in classes)) if classes else "—"
+        ax.set_title(
+            f"{rot} · {f['n']} domicílios · cortes {cortes_txt}\n"
+            f"classes publicadas {linha2}",
+            loc="left", fontsize=9, color=cor, linespacing=1.55,
+        )
         for l in ("top", "right", "bottom", "left"):
             ax.spines[l].set_visible(False)
         ax.set_xticks([]); ax.set_yticks([])
@@ -927,11 +917,10 @@ def fig_faixas(dados: dict) -> None:
         "Cada painel é uma equipe, enquadrado no próprio raio externo — as escalas diferem, veja a barra de cada um. "
         "As duas\nlinhas são as fronteiras dos três tercis, não duas equipes. Quadrados: as três unidades, que caem "
         "quase no mesmo\nponto. A equipe não aparece porque não tem geometria na base; os domicílios não entram "
-        "porque o mapa das casas\né o vazamento que suprimimos. O número ao lado de cada faixa é o tamanho "
-        "da classe publicada.",
+        "porque o mapa das casas\né o vazamento que suprimimos.",
         ha="left", va="bottom", fontsize=8, color="0.35", linespacing=1.6,
     )
-    fig.subplots_adjust(top=0.90, bottom=0.14, hspace=0.20, wspace=0.20)
+    fig.subplots_adjust(top=0.89, bottom=0.14, hspace=0.26, wspace=0.20)
     salvar(fig, "faixas")
 
 
