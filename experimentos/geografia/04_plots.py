@@ -339,16 +339,21 @@ def fig_sensibilidade_k(dados: dict) -> None:
         return
 
     n = dados["domicilios_usados"] - dados.get("fora_do_limite", {}).get("n", 0)
+    # A configuracao ESCOLHIDA vem primeiro e em destaque. A versao anterior
+    # desta figura mostrava "equipe + quartis" e nao mostrava "equipe +
+    # tercis" - as duas custam zero em todo o intervalo, entao a curva estava
+    # certa e a legenda induzia a ler a escolha errada. Quem monta slide a
+    # partir da figura escreve o que a legenda diz.
     interesse = [
-        ("nu_micro_area", "tercis por bucket", "micro-área + tercis", COLOR_PRIMARY, "-", "o"),
-        ("nu_micro_area", "quartis por bucket", "micro-área + quartis", COLOR_PRIMARY, "--", "s"),
-        ("nu_ine", "quartis por bucket", "equipe + quartis", COLOR_SECONDARY, "-", "^"),
-        ("no_bairro_filtro", "tercis por bucket", "bairro + tercis", COLOR_RISK, ":", "d"),
+        ("nu_ine", "tercis por bucket", "equipe + tercis (escolhida)", COLOR_PRIMARY, "-", "o", 2.6),
+        ("nu_micro_area", "tercis por bucket", "micro-área + tercis", COLOR_SECONDARY, "-", "s", 1.6),
+        ("nu_micro_area", "quartis por bucket", "micro-área + quartis", COLOR_SECONDARY, "--", "v", 1.6),
+        ("no_bairro_filtro", "tercis por bucket", "bairro + tercis", COLOR_RISK, ":", "d", 1.6),
     ]
 
     fig, ax = plt.subplots(figsize=(7.2, 3.6))
     plotou = False
-    for bucket, esq, rotulo, cor, ls, mk in interesse:
+    for bucket, esq, rotulo, cor, ls, mk, lw in interesse:
         e = esquemas.get(bucket, {}).get(esq)
         if not e:
             continue
@@ -356,7 +361,7 @@ def fig_sensibilidade_k(dados: dict) -> None:
         if not ks:
             continue
         ys = [100 * e[f"linhas_k_menor_{k}"] / n for k in ks]
-        ax.plot(ks, ys, ls, marker=mk, ms=4.5, lw=1.6, color=cor, label=rotulo)
+        ax.plot(ks, ys, ls, marker=mk, ms=4.5, lw=lw, color=cor, label=rotulo)
         plotou = True
 
     if not plotou:
@@ -376,6 +381,14 @@ def fig_sensibilidade_k(dados: dict) -> None:
         "Custo de utilidade em função de k, por configuração", loc="left", fontsize=11
     )
     ax.legend(frameon=False, fontsize=9, loc="upper left")
+    # Equipe + quartis fica exatamente sobre a escolhida (zero em todo o
+    # intervalo). Dizer isso e melhor que desenhar duas linhas identicas.
+    ax.text(
+        0.5, -0.26,
+        "Equipe + quartis custa zero no intervalo inteiro também, e coincide com a linha da escolhida.\n"
+        "O que separa as configurações não é o número de faixas — é o agrupamento.",
+        transform=ax.transAxes, ha="center", fontsize=8, color="0.35",
+    )
     salvar(fig, "sensibilidade_k")
 
 
