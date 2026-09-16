@@ -892,17 +892,11 @@ def fig_faixas(dados: dict) -> None:
             (f"{c/1000:.1f} km".replace(".", ",") if c >= 1000 else f"{c:.0f} m")
             for c in cortes
         )
-        # O numero da equipe e o das classes ficam no titulo, nao no mapa: os
-        # rotulos dentro do desenho poluiam mais do que informavam. A distincao
-        # entre os dois continua explicita, porque e dela que sai o k - a menor
-        # equipe tem 220 domicilios e a menor classe publicada, 72.
-        classes = f.get("classes_n") or []
-        linha2 = (" · ".join(str(c) for c in classes)) if classes else "—"
-        ax.set_title(
-            f"{rot} · {f['n']} domicílios · cortes {cortes_txt}\n"
-            f"classes publicadas {linha2}",
-            loc="left", fontsize=9, color=cor, linespacing=1.55,
-        )
+        # "domicílios" por extenso em vez de "n=", que se lia como o tamanho da
+        # faixa. Os tamanhos das classes publicadas continuam no JSON da 06,
+        # fora da figura.
+        ax.set_title(f"{rot} · {f['n']} domicílios · cortes {cortes_txt}",
+                     loc="left", fontsize=9, color=cor)
         for l in ("top", "right", "bottom", "left"):
             ax.spines[l].set_visible(False)
         ax.set_xticks([]); ax.set_yticks([])
@@ -920,7 +914,7 @@ def fig_faixas(dados: dict) -> None:
         "porque o mapa das casas\né o vazamento que suprimimos.",
         ha="left", va="bottom", fontsize=8, color="0.35", linespacing=1.6,
     )
-    fig.subplots_adjust(top=0.89, bottom=0.14, hspace=0.26, wspace=0.20)
+    fig.subplots_adjust(top=0.90, bottom=0.14, hspace=0.20, wspace=0.20)
     salvar(fig, "faixas")
 
 
