@@ -212,11 +212,10 @@ def avaliar(nome, chaves, pts: np.ndarray, urbano, tercis=None) -> dict:
     out.update(perda_de_informacao(tamanhos, n_total, ALTURA_DO_NIVEL.get(nome)))
 
     if tercis is not None:
-        pares: dict[tuple, int] = {}
+        pares: dict[tuple, list[int]] = {}
         for i, ch in enumerate(chaves):
-            chave = (ch, tercis[i])
-            pares[chave] = pares.get(chave, 0) + 1
-        tp = sorted(pares.values())
+            pares.setdefault((ch, tercis[i]), []).append(i)
+        tp = sorted(len(v) for v in pares.values())
         out["par_n_classes"] = len(tp)
         out["par_k_min"] = tp[0]
         out["par_k_mediana"] = tp[len(tp) // 2]
@@ -225,6 +224,26 @@ def avaliar(nome, chaves, pts: np.ndarray, urbano, tercis=None) -> dict:
         for t in LIMIARES:
             out[f"par_linhas_k_menor_{t}"] = sum(n for n in tp if n < t)
             out[f"par_iloss_k_{t}"] = iloss_com_supressao(tp, n_total, t)
+
+        # Extensao espacial do que efetivamente vai publicado.
+        #
+        # A compacidade medida acima e a do agrupamento ANTES do tercil. Mas a
+        # celula publicada e (territorio ∩ anel de distancia ate a unidade), que
+        # e menor - entao aquele numero descreve o agrupamento, nao a classe, e
+        # superestima a area que o atacante precisa varrer.
+        #
+        # E a segunda grandeza do problema: k limita quantos candidatos, nao
+        # quanta localizacao. Publicar o k sem este numero e responder metade da
+        # pergunta - a mesma objecao que derrubou o MDAV, aplicada a escolha.
+        disp_par = [d for v in pares.values() if (d := dispersao(pts[v])) is not None]
+        if disp_par:
+            disp_par.sort()
+            out["par_compacidade_mediana_m"] = round(disp_par[len(disp_par) // 2], 1)
+            out["par_compacidade_min_m"] = round(disp_par[0], 1)
+            out["par_compacidade_pior_m"] = round(disp_par[-1], 1)
+            # A lista inteira: sao poucas classes, e e nela que se ve se alguma
+            # delas ficou fina demais e pede fusao de tercil.
+            out["par_compacidades_m"] = [round(d, 1) for d in disp_par]
     return out
 
 
@@ -381,6 +400,25 @@ def main() -> None:
         )
 
     if distancias:
+        titulo("Extensão espacial da classe publicada")
+        print("  O tercil corta o território em anéis: a célula publicada é menor")
+        print("  que o agrupamento. É a área que o atacante precisa varrer.\n")
+        cab2 = f"  {'agrupamento':30} {'agrupamento':>12} {'classe publ.':>13} {'mais fina':>11}"
+        print(cab2)
+        print("  " + "-" * (len(cab2) - 2))
+        for nome, m in rel["agrupamentos"].items():
+            if m.get("par_compacidade_mediana_m") is None:
+                continue
+            print(
+                f"  {nome:30} {m['compacidade_mediana_m']:>10.0f} m "
+                f"{m['par_compacidade_mediana_m']:>11.0f} m "
+                f"{m['par_compacidade_min_m']:>9.0f} m"
+            )
+        esc = rel["agrupamentos"].get("equipe (INE)", {})
+        if esc.get("par_compacidades_m"):
+            print(f"\n  classes publicadas da escolha, da mais fina à mais larga:")
+            print("   ", " · ".join(f"{d:.0f} m" for d in esc["par_compacidades_m"]))
+
         titulo(f"k do par (agrupamento, tercil) — o que vai publicado")
         for nome, m in rel["agrupamentos"].items():
             n = rel["domicilios"]
@@ -402,6 +440,9 @@ def main() -> None:
     print("     é a curva que a figura iloss_por_k desenha.")
     print("  Prec = 1 - h/|HGV|: só existe para nível que pertence à hierarquia")
     print("     do endereço. Micro-área sozinha e MDAV não são nós dela.")
+    print("  compacidade da classe publicada = raio efetivo que o registro revela.")
+    print("     k limita quantos candidatos; este número limita quanta localização.")
+    print("     São grandezas distintas, e as duas precisam ser reportadas.")
     print("  O agrupamento a publicar é o que passa no k do par E é compacto E é puro,")
     print("     com o menor ILoss entre os que passam.")
 
