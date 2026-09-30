@@ -60,6 +60,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
 
+from sqlalchemy import event
+
 ROOT = Path(__file__).resolve().parent
 SCRIPTS_DIR = ROOT / "scripts"
 TESTS_DIR = SCRIPTS_DIR / "tests"
@@ -134,6 +136,24 @@ def _audit(report_module, engine, before: dict, started_at: datetime, path: Path
         return None
 
 
+def _sem_paralelismo(engine):
+    """Toda sessão do banco de trabalho roda sem workers paralelos.
+
+    Consulta e manutenção paralelas trocam dados por segmentos de memória
+    compartilhada (`/dev/shm`), e o container do Postgres no servidor tem o
+    padrão do Docker, 64 MB — o VACUUM da v01 morreu com "could not resize
+    shared memory segment". Sem paralelismo nada depende do /dev/shm; o custo
+    é só tempo.
+    """
+    @event.listens_for(engine, "connect")
+    def _configurar(dbapi_conn, _record):
+        with dbapi_conn.cursor() as cur:
+            cur.execute("SET max_parallel_workers_per_gather = 0")
+            cur.execute("SET max_parallel_maintenance_workers = 0")
+
+    return engine
+
+
 def _versao_valida(nome: str, cadeia_esperada: list[dict]) -> bool:
     meta = v.ler_meta_dump(nome)
     return meta is not None and meta.get("cadeia") == cadeia_esperada
@@ -195,7 +215,7 @@ def _run_pipeline(migrations: list[Path], connect, admin, log_file: Path, a_part
     _preparar_banco_trabalho(admin, migrations, k)
 
     report_module = _load_module(SCRIPTS_DIR / REPORT_MODULE)
-    engine = connect.create_db_engine(v.BANCO_TRABALHO)
+    engine = _sem_paralelismo(connect.create_db_engine(v.BANCO_TRABALHO))
     foto_anterior: dict | None = None
     anterior = v.NOME_V00 if k == 0 else v.nome_versao(migrations[k - 1])
     try:
@@ -225,20 +245,30 @@ def _run_pipeline(migrations: list[Path], connect, admin, log_file: Path, a_part
 
             # 2) Aplicar no banco de trabalho.
             started_at = datetime.now(timezone.utc)
+            if foto_anterior is None:
+                log.info("tirando foto de auditoria antes da migration...")
+                foto_anterior = report_module.build_snapshot(engine)
+            # A partir daqui o banco deixa de ser a versão anterior. Se algo
+            # quebrar depois do commit da migration (VACUUM, auditoria, dump),
+            # a marca impede a próxima execução de reaproveitar o banco como se
+            # ainda fosse a versão anterior — ela restaura do dump.
+            meta_anterior = v.ler_meta_banco(admin, v.BANCO_TRABALHO)
+            v.gravar_meta_banco(admin, v.BANCO_TRABALHO, {"em_andamento": nome, "origem": anterior})
             try:
-                if foto_anterior is None:
-                    log.info("tirando foto de auditoria antes da migration...")
-                    foto_anterior = report_module.build_snapshot(engine)
                 run(engine)
             except Exception:
+                # Migration atômica: o rollback deixou o banco na versão anterior.
+                v.gravar_meta_banco(admin, v.BANCO_TRABALHO, meta_anterior)
                 log.exception("[FALHA] %s — migration revertida; banco de trabalho segue na %s.",
                               path.name, anterior)
                 return 1
 
             # UPDATE em massa deixa tupla morta; o VACUUM libera o espaço para
             # reuso antes da próxima etapa (o disco do servidor é justo).
+            # PARALLEL 0: o vacuum paralelo de índice pede segmento de memória
+            # compartilhada, e o /dev/shm do container tem só 64 MB.
             with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as c:
-                c.exec_driver_sql("VACUUM")
+                c.exec_driver_sql("VACUUM (PARALLEL 0)")
 
             relatorio = log_file.with_name(f"{log_file.stem}_v{numero:02d}_auditoria.json")
             foto_anterior = _audit(report_module, engine, foto_anterior, started_at, relatorio)
@@ -325,6 +355,9 @@ def main() -> int:
         exit_code = _run_pipeline(migrations, connect, admin, log_file, args.a_partir_de)
     except (v.ConexoesAbertas, v.ErroDump) as exc:
         log.error("%s", exc)
+        exit_code = 1
+    except Exception:
+        log.exception("erro inesperado; rode de novo para retomar da última versão gravada.")
         exit_code = 1
 
     if exit_code == 0:

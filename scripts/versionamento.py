@@ -159,6 +159,9 @@ def _env_pg() -> dict:
         "PGPORT": os.environ["DB_PORT"],
         "PGUSER": os.environ["DB_USER"],
         "PGPASSWORD": os.environ["DB_PASSWORD"],
+        # Sem workers paralelos (ex.: CREATE INDEX no restore): o /dev/shm do
+        # container do Postgres tem 64 MB e o paralelismo depende dele.
+        "PGOPTIONS": "-c max_parallel_workers_per_gather=0 -c max_parallel_maintenance_workers=0",
     }
 
 
