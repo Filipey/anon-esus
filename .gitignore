@@ -6,3 +6,5 @@ venv/
 /plots/
 /experimentos/*/resultados/*
 !/experimentos/*/resultados/.gitkeep
+# Levantamentos da fase 2 gravam valor de célula real (texto clínico).
+/scripts/fase-02/*/resultados/
