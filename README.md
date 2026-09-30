@@ -47,14 +47,13 @@ idoso etc.).
   de coordenada de visita domiciliar e micro-área. A lista de colunas de
   cada migration é conferida contra o schema físico real via
   `scripts/audit_schema.py` (`docs/auditoria_schema.md`).
-- **`06_anon_endereco.py` está pendente de substituição.** A permutação de
-  endereços dentro do município foi medida contra o banco real e falha nos
-  dois sentidos — é inerte ou reversível onde o município de origem tem
-  poucos endereços candidatos, e destrói a associação pessoa↔lugar onde
-  tem muitos. O desenho aprovado suprime o endereço completo e reconstrói
-  a utilidade por atributos derivados. Bloqueado em decisões e em trabalho
-  manual (geocodificação das 12 unidades). Ver
-  [`docs/relatorio_migrations.md`](docs/relatorio_migrations.md).
+- **`06_anon_endereco.py` foi substituída (set/2026):** o endereço fino é
+  suprimido, a equipe (INE) fica como agrupamento geográfico e o tercil de
+  distância até a unidade é derivado antes da supressão. Ver
+  [`PIPELINE.md`](PIPELINE.md#migration-06--endereço-supressão--tercil-de-distância).
+- **Versões incrementais:** a pipeline não escreve mais na base original;
+  grava um dump por etapa (`versoes/`), restaurável para o PEC gerar
+  relatórios sobre cada versão. Ver [`PIPELINE.md`](PIPELINE.md#versões-incrementais-da-base).
 - **Fase 2, ainda fora do escopo desta pipeline** (decisão explícita):
   texto livre via NER, differential privacy real para dado antropométrico
   extremo, geração sintética de doenças raras/dados genéticos, e as

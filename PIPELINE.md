@@ -11,15 +11,16 @@ o inventário de tabelas/colunas do Data Warehouse.
 ## Estrutura
 
 ```
-pipeline.py                       # orquestrador: testa e roda as migrations em ordem
+pipeline.py                       # orquestrador: testa e roda as migrations em ordem, uma versão da base por migration
 scripts/
-  00_connect_db.py                # conexão compartilhada -> expõe `engine`
+  00_connect_db.py                # conexão compartilhada -> expõe `engine` e `create_db_engine(banco)`
+  versionamento.py                # dumps, restauração e procedência das versões da base (não é migration)
   01_anon_cpf.py                  # migration: anonimiza todos os CPFs
   02_anon_unidade_saude.py        # migration: nomes e CNES de unidades -> genéricos
   03_anon_email.py                # migration: e-mails -> termo genérico (pessoal/institucional)
   04_anon_datas_cidadao.py        # migration: dia de nascimento + datas de registro (auto-descoberta)
   05_anon_profissional.py         # migration: nomes/registros de profissionais
-  06_anon_endereco.py             # migration: endereços -> outro do mesmo município (A SUBSTITUIR)
+  06_anon_endereco.py             # migration: endereço suprimido + tercil de distância derivado
   07_anon_documentos.py           # migration: exclui conteúdo/nome de arquivos anexados
   08_anon_antropometrico.py       # migration: dado antropométrico -> hash provisório
   09_anon_nome_cidadao.py         # migration: nome do cidadão (próprio/mãe/pai/social)
@@ -78,7 +79,8 @@ Para **cada** migration, o orquestrador:
 1. roda o teste correspondente (`scripts/tests/test_NN_*.py`) contra um
    PostgreSQL **efêmero** — criado num diretório temporário e destruído
    ao fim, isolado do banco real (fixture `pg_engine`);
-2. **só aplica a migration no banco real se o teste passar.**
+2. **só aplica a migration se o teste passar** — na cópia que vira a
+   próxima versão, nunca na base original (ver "Versões incrementais").
 
 Migration sem teste é tratada como falha e aborta a pipeline. Usamos um
 Postgres efêmero (via `testing.postgresql`) em vez de SQLite/H2 porque as
@@ -110,11 +112,71 @@ Instale as dependências:
 pip install -r requirements.txt
 ```
 
+Opcionais: `VERSAO_BANCO_TRABALHO` (padrão `esus_anon_trabalho`), o banco
+do servidor onde as migrations rodam; `VERSOES_DIR` (padrão `versoes/`),
+onde ficam os dumps. É preciso `pg_dump`/`pg_restore` na máquina que roda a
+pipeline (a versão do cliente pode ser mais nova que a do servidor).
+
 ## Execução
 
 ```bash
-python pipeline.py
+python pipeline.py                     # cria/retoma a cadeia de versões
+python pipeline.py --a-partir-de 6     # refaz a versão 06 e as seguintes
+python pipeline.py --listar            # versões gravadas e estado do banco de trabalho
+python pipeline.py --restaurar 5       # restaura a v05 no banco de trabalho (para o PEC)
+python pipeline.py --restaurar 5 --banco esus_v05   # ... ou num banco à parte
 ```
+
+## Versões incrementais da base
+
+A pipeline **nunca escreve no banco `DB_NAME`**, que é tratado como a
+base original. As migrations rodam em sequência num único **banco de
+trabalho** no servidor, e depois de cada uma a pipeline grava um dump da
+versão na máquina local:
+
+```
+DB_NAME (original, intocado)
+  └─ pg_dump ─> versoes/v00_original.dump
+                 └─ restore no banco de trabalho
+                      + 01 ─> versoes/v01_cpf.dump
+                      + 02 ─> versoes/v02_unidade_saude.dump
+                      ...
+                      + 14 ─> versoes/v14_territorio.dump
+```
+
+Assim o servidor só precisa de espaço para **um** banco além da original
+(o disco de dados tinha 26 GB livres para uma base de 10 GB), e cada
+versão ocupa na máquina local só o dump comprimido, sem índices. Para o PEC
+gerar os relatórios do próprio sistema sobre uma versão, restaure-a
+(`--restaurar NN`) e aponte o PEC para o banco restaurado. O código fica em
+`scripts/versionamento.py`; `versoes/` está no `.gitignore` (é dado real).
+
+**Procedência.** Cada dump tem um `.json` ao lado com número e nome da
+versão, versão de origem, a **cadeia** de migrations que a gerou (nome e
+SHA-256 de cada arquivo, em ordem), commit/branch do git (e se havia
+alteração não commitada), data e o relatório de auditoria da etapa. O banco
+de trabalho guarda o mesmo JSON no `COMMENT ON DATABASE`, para a pipeline
+saber em que versão ele está. Nenhuma tabela é criada dentro da base.
+
+**Reaproveitamento.** Numa nova execução, a pipeline retoma da última
+versão cuja cadeia bate com os arquivos atuais: se a migration NN mudou,
+as versões NN em diante são apagadas e refeitas, a partir do dump NN-1.
+`--a-partir-de NN` força o mesmo sem mudar arquivo.
+
+**Reprodutibilidade.** O banco de trabalho é sempre recriado a partir de
+um dump, nunca copiando a original viva (o PEC continua escrevendo nela),
+então cada versão deriva exatamente da anterior gravada. As migrations são
+determinísticas — inclusive a 01, com a semente `CPF_SEED` —, então uma
+versão refeita sai igual à anterior.
+
+**Conexões abertas.** O `pg_dump` da original funciona com o PEC
+conectado. Já recriar o banco de trabalho exige que ninguém esteja
+conectado a ele; se houver alguém (o PEC, um DBeaver), a pipeline aborta e
+lista as conexões — nunca as derruba. Feche e rode de novo.
+
+**Falha.** Se o teste ou a migration falhar, a migration é revertida e o
+banco de trabalho continua na versão anterior; a próxima execução retoma
+dali.
 
 ## Logging
 
@@ -303,38 +365,43 @@ pode gerar um registro como "Maria Teste" com `no_sexo = 'M'`. Não é
 vazamento de privacidade, mas é uma incoerência que ainda não foi
 corrigida.
 
-## Migration 06 — Endereços de cidadãos
+## Migration 06 — Endereço: supressão + tercil de distância
 
-> **Pendente de substituição (decisão de set/2026).** A abordagem descrita
-> abaixo — permutação de endereços dentro do município — foi medida contra o
-> banco real e falha de duas formas: é **inerte** onde o município de origem
-> tem um único endereço candidato (87 de 153; ~743 registros mantêm o
-> endereço real, sem aviso no log) ou **reversível** onde tem exatamente dois
-> (o `% 1` anula o hash e a troca vira transposição determinística); e onde o
-> conjunto de candidatos é grande, **destrói a associação** entre a pessoa e
-> o lugar, que era o requisito de utilidade de partida. O conjunto de
-> endereços por município é invariante sob a operação: ela permuta, não cria
-> diversidade.
->
-> O desenho aprovado suprime o endereço completo (identificador direto) e
-> reconstrói a utilidade por atributos derivados — bucket geográfico com k
-> mínimo e faixa de distância até a unidade de vínculo. Bloqueado na
-> geocodificação das 12 unidades (trabalho manual, antes da migration 02, que
-> destrói o CNES usado na consulta pública), na escolha do eixo geográfico e
-> na definição de k e da largura da banda. Ver `docs/relatorio_migrations.md`.
+Substitui a versão anterior (permutação de endereços dentro do município),
+que o diagnóstico de set/2026 mostrou ser **inerte** onde o município tinha
+um só endereço candidato, **reversível** onde tinha dois e **destrutiva da
+associação** pessoa↔lugar onde tinha muitos (ver
+`docs/relatorio_migrations.md`, achado A2). Implementa o desenho aprovado,
+com os parâmetros fechados em `experimentos/geografia/`:
 
-Substitui o endereço completo por outro endereço já existente na mesma tabela
-e no mesmo município. A migration troca o conjunto de campos de uma vez
-(bairro, complemento, logradouro, referência, CEP, número e, quando existem,
-coordenadas de latitude/longitude), evitando montar endereços artificiais.
-Tabelas sem coluna de município reconhecida são puladas com aviso.
+1. **Suprime** (NULL) o endereço fino de cidadão, profissional e
+   domicílio — logradouro, número, complemento, ponto de referência, CEP,
+   **bairro** e coordenadas do domicílio — em `tb_`, `ta_`, `tl_` e DW
+   (`ADDRESS_TABLES`). O bairro sai porque o eixo publicado é a equipe, e
+   publicar as duas partições juntas refinaria a localização.
+2. **Generaliza** para a equipe (INE), que continua na base e recebe código
+   fictício na 13. A micro-área é suprimida pela 14.
+3. **Deriva**, antes de suprimir, o **tercil de distância** do domicílio
+   até a sua unidade (`tb_cds_domicilio.nu_cnes`), com os cortes calculados
+   dentro de cada equipe — mesma regra do experimento 06. Classes
+   (equipe, tercil) com menos de `K_MIN = 20` domicílios não recebem tercil.
+   O valor é gravado em `tb_cds_domicilio.ds_ponto_referencia` (a coluna
+   suprimida no passo 1), no formato `TERCIL_TEMPLATE`
+   ("faixa de distancia ate a unidade: tercil N de 3 da equipe"). Só a
+   tabela mestra do domicílio recebe o tercil.
+4. **Não toca** o endereço de unidade de saúde, DSEI e polo base
+   (`PRESERVED_TABLES`): institucional e público. A migration recusa rodar
+   se alguma delas entrar em `ADDRESS_TABLES`.
 
-Tabelas/colunas declaradas em `ADDRESS_TABLES` no topo de
-`scripts/06_anon_endereco.py`. O número da casa (`nu_numero`/`nu_domicilio`
-+ `st_sem_numero`) e, nas tabelas de domicílio, `nu_latitude`/`nu_longitude`
-foram confirmados no schema real e adicionados ao mesmo conjunto atômico —
-antes ficavam de fora, o que deixava o número (e as coordenadas) da casa
-original sobrevivendo junto com a rua/bairro de outro endereço.
+As coordenadas das unidades vêm de
+`experimentos/geografia/unidades_coordenadas.csv`. Como a 02 roda antes e
+troca o CNES, o CSV é casado pelo CNES real e pelo fictício que a 02 gera
+para ele (`_fake_cnes`, determinístico). Sem o CSV, a migration só suprime
+e avisa no log.
+
+Na base real (set/2026): 1.914 dos 3.554 domicílios têm coordenada válida
+e recebem tercil; equipes de 220 a 661 domicílios; menor classe publicada
+com 72 — acima de k = 20.
 
 ## Migration 07 — Documentos e anexos
 
@@ -377,6 +444,23 @@ para profissional), com o mesmo mecanismo de mapa determinístico de
 
 Colunas declaradas em `NAME_COLUMNS` no topo de
 `scripts/09_anon_nome_cidadao.py`.
+
+**Cobertura ampliada (set/2026).** A primeira versão só tratava as 11
+colunas `no_nome*` do DW e de atividade coletiva; a tabela mestra
+(`tb_cidadao` e cópias `ta_`/`tl_`), o cadastro individual CDS, o
+`tb_fat_cidadao_pec`, o Bolsa Família e o cache de acompanhamento ficavam
+com o nome real — mais de um milhão de células. Agora são 60 colunas,
+tiradas de uma varredura do schema real.
+
+**Mesma pessoa, mesmo fictício.** A chave do mapa é o nome normalizado (sem
+acento, minúsculo, espaço simples), então grafias diferentes do mesmo nome
+em tabelas diferentes viram o mesmo fictício, que sai no estilo de caixa do
+original.
+
+**Colunas de busca.** `*_filtro` (`FILTER_COLUMNS`) são recalculadas a
+partir dos nomes já trocados, no formato observado no banco: nome social +
+nome, minúsculo e sem acento. Sem isso elas guardariam o nome real e a
+busca por nome no PEC deixaria de achar o cidadão.
 
 ## Migration 10 — CNS (hash provisório)
 
