@@ -1,0 +1,12 @@
+# Coordenadas das unidades de saude. Preencher latitude e longitude a mao,
+# a partir do cadastro publico do CNES ou geocodificando o endereco abaixo.
+#
+# Gerado por 00_unidades.py. Endereco de unidade e dado institucional
+# publico - nenhuma coordenada de domicilio ou de cidadao entra aqui.
+#
+# co_unidade: chave como aparece na tabela de domicilio (e a que o
+#             03_faixa_de_distancia.py usa para casar).
+co_unidade,nu_cnes,nome_referencia,endereco_referencia,latitude,longitude
+2380692,2380692,UBS Unidade Basica de Saude Francisco Ildemar de Castro,"RUA PRINCESA ISABEL, 14, CENTRO, 59910000",-6.0932945,-38.3754307
+2380722,2380722,UBS Unidade Basica de Saude Cristalino Leite da Silva,"MEREJO, S/N, ZONA RURAL, 59910000",-6.0936572,-38.3736984
+2380730,2380730,UBS Unidade Basica de Saude Maria Nogueira Neta,"SITIO LAGOA DE DENTRO, S/N, ZONA RURAL, 59910000",-6.0936552,-38.3736870

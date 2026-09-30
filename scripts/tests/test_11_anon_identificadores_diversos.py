@@ -40,6 +40,16 @@ def _seed(engine):
                 "(co_seq serial PRIMARY KEY, nu_cpf_cns_responsavel varchar(20))"
             )
         )
+        # Largura real do schema do e-SUS: varchar(10), mais estreita que os
+        # 11 digitos de um celular. Modelar isso e o que faltava para o teste
+        # reproduzir a falha vista no banco real.
+        c.execute(
+            text(
+                "CREATE TABLE public.tb_dsei "
+                "(co_seq serial PRIMARY KEY, nu_telefone1 varchar(10), "
+                "nu_telefone2 varchar(10))"
+            )
+        )
         c.execute(
             text(
                 "INSERT INTO public.tb_fat_atendimento_individual (nu_prontuario) VALUES "
@@ -59,6 +69,12 @@ def _seed(engine):
             text(
                 "INSERT INTO public.tb_familia (nu_cpf_cns_responsavel) VALUES "
                 "('52998224725'), ('123456789012345')"
+            )
+        )
+        c.execute(
+            text(
+                "INSERT INTO public.tb_dsei (nu_telefone1, nu_telefone2) VALUES "
+                "('6733334444', '6733335555')"
             )
         )
 
@@ -98,6 +114,28 @@ def test_telefone_e_substituido_por_ficticio(pg_engine):
 
     assert cidadao.nu_telefone_celular != "11999998888"
     assert len(cidadao.nu_telefone_celular) == 11
+
+
+def test_telefone_cabe_em_coluna_mais_estreita_que_11_digitos(pg_engine):
+    """Regressao: telefone de 11 digitos estourava `varchar(10)`.
+
+    Na execucao real contra o banco a migration inteira caiu com
+    StringDataRightTruncation em `tb_dsei.nu_telefone1` e foi revertida,
+    levando junto prontuario, NIS, naturalizacao e obito. O valor ficticio
+    precisa ter a mesma quantidade de digitos do original.
+    """
+    _seed(pg_engine)
+    m.run(pg_engine)
+
+    with pg_engine.connect() as c:
+        dsei = c.execute(
+            text("SELECT nu_telefone1, nu_telefone2 FROM public.tb_dsei")
+        ).first()
+
+    assert dsei.nu_telefone1 != "6733334444"
+    assert dsei.nu_telefone2 != "6733335555"
+    assert len(dsei.nu_telefone1) == 10
+    assert len(dsei.nu_telefone2) == 10
 
 
 def test_nis_e_hasheado(pg_engine):

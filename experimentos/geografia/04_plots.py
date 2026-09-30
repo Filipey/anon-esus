@@ -1,0 +1,949 @@
+"""Experimento 04 - gera os graficos dos experimentos em PDF (e PNG).
+
+Le os JSON mais recentes de `resultados/` e produz as figuras que sustentam
+a decisao de geografia da fase 1. **Nao acessa o banco**: tudo que precisa
+ja esta agregado nos resultados dos experimentos 01-03, entao roda offline
+e a qualquer momento.
+
+Reaproveita o estilo visual de `scripts/plots/_common.py` (serif, mathtext
+Computer Modern) para as figuras sairem coerentes com as ja existentes no
+projeto.
+
+Figuras geradas:
+
+  k_por_nivel          k mediano da classe por nivel geografico candidato
+  distancia            distribuicao da distancia domicilio -> unidade
+  esquemas_de_faixa    supressao por esquema de faixa e agrupamento
+  sensibilidade_k      supressao em funcao de k, por configuracao
+  agrupamentos         compacidade contra supressao, por agrupamento candidato
+  iloss_por_k          supressao E perda de informacao em funcao de k
+  mapa_unidades        as unidades geocodificadas sobre o limite do municipio
+  criterios            a decisao inteira: quatro criterios, cinco candidatos
+  faixas               geometria dos tercis: aneis em torno de cada unidade
+
+`sensibilidade_k` e a que responde "por que k=20": ela mostra que a escolha
+entre k=2 e k=20 nao muda o resultado na configuracao recomendada, e onde
+fica o joelho da curva.
+
+`iloss_por_k` e o par dela no eixo de utilidade. A curva de supressao conta
+*quantos registros* se perde ao exigir k; a de ILoss conta *quanta
+informacao*, somando o que a generalizacao ja custava antes de suprimir
+qualquer coisa. As duas juntas mostram a inversao que sustenta a decisao: o
+agrupamento de menor ILoss enquanto k e frouxo e o de maior ILoss assim que
+k aperta, porque a perda migra de generalizacao para supressao.
+"""
+
+from __future__ import annotations
+
+import csv
+import json
+import math
+import sys
+from datetime import datetime
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+PALETA_AGRUPAMENTO = {
+    "equipe (INE)": ("#2E4057", "-", "o"),
+    "par (equipe, micro-área)": ("#F18F01", "--", "s"),
+    "micro-área só": ("#9E2A2B", ":", "d"),
+    "MDAV k=20": ("#2A9D8F", "-.", "^"),
+    "MDAV k=20 estratificado": ("#7E57C2", (0, (3, 1, 1, 1)), "v"),
+}
+
+CSV_UNIDADES_NOME = "unidades_coordenadas.csv"
+MALHAS = {
+    "municipio": "malhas/municipio_2403202.geojson",   # Doutor Severiano / RN
+    "uf": "malhas/uf_24.geojson",                      # Rio Grande do Norte
+}
+MUNICIPIO = "Doutor Severiano — RN"
+
+AQUI = Path(__file__).resolve().parent
+RAIZ = AQUI.parents[1]
+RESULTADOS = AQUI / "resultados"
+SAIDA = AQUI / "figuras"
+
+sys.path.insert(0, str(RAIZ / "scripts" / "plots"))
+try:
+    from _common import COLOR_PRIMARY, COLOR_RISK, COLOR_SECONDARY, set_latex_style
+except Exception:  # noqa: BLE001 - o modulo puxa sqlalchemy/seaborn; se faltar, segue
+    COLOR_PRIMARY, COLOR_SECONDARY, COLOR_RISK = "#2E4057", "#F18F01", "#9E2A2B"
+
+    def set_latex_style() -> None:
+        plt.rcParams.update(
+            {
+                "font.family": "serif",
+                "mathtext.fontset": "cm",
+                "axes.edgecolor": "0.3",
+                "axes.linewidth": 0.8,
+                "grid.linewidth": 0.5,
+                "grid.alpha": 0.4,
+                "figure.dpi": 150,
+                "savefig.dpi": 300,
+                "savefig.bbox": "tight",
+            }
+        )
+
+
+def ultimo(prefixo: str) -> dict | None:
+    arquivos = sorted(RESULTADOS.glob(f"{prefixo}_*.json"))
+    if not arquivos:
+        print(f"  AUSENTE: nenhum {prefixo}_*.json em resultados/ - figura pulada")
+        return None
+    print(f"  lendo {arquivos[-1].name}")
+    return json.loads(arquivos[-1].read_text(encoding="utf-8"))
+
+
+def salvar(fig, stem: str) -> None:
+    SAIDA.mkdir(parents=True, exist_ok=True)
+    caminho = SAIDA / f"{stem}.pdf"
+    fig.savefig(caminho)
+    fig.savefig(caminho.with_suffix(".png"))
+    plt.close(fig)
+    print(f"  -> {caminho.relative_to(RAIZ)}  (+ .png)")
+
+
+def haversine_m(lat1, lng1, lat2, lng2) -> float:
+    r = 6_371_000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = math.radians(lat2 - lat1), math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def ler_unidades() -> list[dict]:
+    """Le o CSV de coordenadas, descartando os comentarios do cabecalho.
+
+    O arquivo comeca com linhas `#` de procedencia. Entregar isso direto ao
+    DictReader faz a primeira delas virar cabecalho e todo campo voltar None -
+    erro que ja aconteceu uma vez e nao avisa, so devolve nada.
+    """
+    caminho = AQUI / CSV_UNIDADES_NOME
+    if not caminho.exists():
+        return []
+    linhas = [
+        ln for ln in caminho.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+    saida = []
+    for r in csv.DictReader(linhas):
+        try:
+            r["lat"] = float(r["latitude"])
+            r["lng"] = float(r["longitude"])
+        except (TypeError, ValueError):
+            continue  # unidade ainda nao geocodificada
+        saida.append(r)
+    return saida
+
+
+def aneis_de(caminho: Path) -> list[list[tuple[float, float]]]:
+    """Extrai os aneis externos de um GeoJSON, seja Polygon ou MultiPolygon."""
+    if not caminho.exists():
+        return []
+    geo = json.loads(caminho.read_text(encoding="utf-8"))
+    aneis = []
+    for feat in geo.get("features", []):
+        g = feat["geometry"]
+        partes = [g["coordinates"]] if g["type"] == "Polygon" else g["coordinates"]
+        for poly in partes:
+            aneis.append([(x, y) for x, y in poly[0]])
+    return aneis
+
+
+def limiares_de(entrada: dict) -> list[int]:
+    """Descobre os limiares de k presentes no resultado.
+
+    O conjunto mudou ao longo dos experimentos (de 5 para 11 valores), entao
+    a figura se adapta ao que o JSON tiver em vez de assumir uma lista fixa.
+    """
+    ks = []
+    for chave in entrada:
+        if chave.startswith("linhas_k_menor_"):
+            ks.append(int(chave.rsplit("_", 1)[1]))
+    return sorted(ks)
+
+
+# ---------------------------------------------------------------- figura 1
+def fig_k_por_nivel(dados: dict) -> None:
+    niveis = dados.get("niveis", {})
+    ordem = [
+        ("área / equipe", "area / equipe"),
+        ("unidade", "unidade"),
+        ("micro-área", "micro-area (territorio)"),
+        ("bairro", "bairro (normalizado)"),
+        ("município", "municipio"),
+    ]
+    rotulos, medianas, suprimir, passa = [], [], [], []
+    for rotulo, chave in ordem:
+        e = niveis.get(chave, {}).get("isolado")
+        if not e or "mediana" not in e:
+            continue
+        rotulos.append(rotulo)
+        medianas.append(max(1, int(e["mediana"])))
+        n20 = int(e.get("linhas_k_menor_20", 0))
+        suprimir.append(n20)
+        passa.append(int(e["mediana"]) >= 20)
+
+    if not rotulos:
+        print("  sem niveis utilizaveis no exp. 02 - figura pulada")
+        return
+
+    fig, ax = plt.subplots(figsize=(7.2, 3.4))
+    y = np.arange(len(rotulos))[::-1]
+    cores = [COLOR_PRIMARY if p else COLOR_RISK for p in passa]
+    ax.barh(y, medianas, height=0.6, color=cores)
+    ax.set_xscale("log")
+    ax.set_xlim(1, max(medianas) * 3)
+    ax.set_yticks(y, rotulos)
+    ax.axvline(20, color=COLOR_RISK, ls="--", lw=1.1, alpha=0.8)
+    ax.text(20, len(rotulos) - 0.35, " k = 20", color=COLOR_RISK, fontsize=9, va="bottom")
+
+    for yi, m, s in zip(y, medianas, suprimir):
+        txt = f"{m:,}".replace(",", ".")
+        if s:
+            txt += f"   ({s} linha{'s' if s > 1 else ''} abaixo do mínimo)"
+        ax.text(m * 1.15, yi, txt, va="center", fontsize=8.5, color="0.25")
+
+    ax.set_xlabel("tamanho mediano da classe de equivalência (escala log)")
+    ax.set_title("k por nível geográfico candidato, isoladamente", loc="left", fontsize=11)
+    ax.grid(axis="y", visible=False)
+    salvar(fig, "k_por_nivel")
+
+
+# ---------------------------------------------------------------- figura 2
+def fig_distancia(dados: dict) -> None:
+    d = dados.get("distancia_m")
+    if not d:
+        print("  sem distancia no exp. 03 - figura pulada")
+        return
+
+    fig, ax = plt.subplots(figsize=(7.2, 2.6))
+    caixa = {
+        "med": d["mediana"],
+        "q1": d["p25"],
+        "q3": d["p75"],
+        "whislo": d["min"],
+        "whishi": d["p95"],
+        "fliers": [d["max"]],
+        "label": "",
+    }
+    bp = ax.bxp(
+        [caixa], orientation="horizontal", showfliers=True,
+        widths=0.45, patch_artist=True,
+    )
+    for p in bp["boxes"]:
+        p.set(facecolor=COLOR_PRIMARY, alpha=0.25, edgecolor=COLOR_PRIMARY, lw=1.2)
+    for p in bp["medians"]:
+        p.set(color=COLOR_PRIMARY, lw=2.2)
+    for p in bp["whiskers"] + bp["caps"]:
+        p.set(color="0.45", lw=1)
+    for p in bp["fliers"]:
+        p.set(marker="o", markerfacecolor=COLOR_RISK, markeredgecolor="none", markersize=5)
+
+    ax.set_xscale("log")
+    ax.set_xlabel("distância domicílio → unidade de vínculo (m, escala log)")
+    razao = d["p75"] / d["p25"] if d["p25"] else 0
+    milhar = f"{d['n']:,}".replace(",", ".")
+    ax.set_title(
+        f"Do 1º ao 3º quartil a distância cresce {razao:.0f}× (n = {milhar})",
+        loc="left",
+        fontsize=11,
+    )
+    for chave, rotulo, dy in (
+        ("p25", "p25", 0.34), ("mediana", "mediana", -0.40), ("p75", "p75", 0.34),
+        ("p95", "p95", -0.40), ("max", "máx.", 0.34),
+    ):
+        v = d[chave]
+        texto = f"{v/1000:.0f} km" if v >= 1000 else f"{v:.0f} m"
+        ax.annotate(
+            f"{rotulo} {texto}", xy=(v, 1), xytext=(v, 1 + dy),
+            ha="center", fontsize=8, color=COLOR_RISK if chave == "max" else "0.3",
+        )
+    ax.set_yticks([])
+    ax.grid(axis="y", visible=False)
+    salvar(fig, "distancia")
+
+
+# ---------------------------------------------------------------- figura 3
+def fig_esquemas(dados: dict) -> None:
+    esquemas = dados.get("esquemas")
+    if not esquemas:
+        print("  sem esquemas no exp. 03 (rode a versao nova) - figura pulada")
+        return
+
+    n = dados["domicilios_usados"] - dados.get("fora_do_limite", {}).get("n", 0)
+    larguras = dados.get("larguras", {})
+    buckets = list(esquemas)
+
+    # Ordem deliberada: primeiro a largura fixa (o termo de comparacao), depois
+    # os esquemas de numero limitado de faixas, do mais grosso ao mais fino.
+    # Sem a largura fixa na figura o resultado central - que o formato importa
+    # mais que a largura - fica invisivel.
+    COLUNAS = [
+        ("1 km fixo", None),
+        ("6 fixas", "6 faixas fixas (250/500/1k/2.5k/5k)"),
+        ("4 fixas", "4 faixas fixas (500/1.5k/5k)"),
+        ("quartis", "quartis por bucket"),
+        ("tercis", "tercis por bucket"),
+    ]
+    rotulo_bucket = {
+        "nu_micro_area": "micro-área", "nu_ine": "equipe (INE)",
+        "no_bairro_filtro": "bairro",
+    }
+
+    fig, axes = plt.subplots(1, len(buckets), figsize=(8.0, 3.2), sharey=True)
+    axes = np.atleast_1d(axes)
+    for ax, b in zip(axes, buckets):
+        vals = []
+        for _, chave in COLUNAS:
+            if chave is None:
+                e = larguras.get(b, {}).get("1000m", {}).get("sem_outliers")
+            else:
+                e = esquemas.get(b, {}).get(chave)
+            vals.append(100 * e["linhas_k_menor_20"] / n if e else float("nan"))
+
+        cores = [COLOR_PRIMARY if v < 0.2 else COLOR_RISK for v in vals]
+        x = np.arange(len(COLUNAS))
+        ax.bar(x, vals, width=0.62, color=cores)
+        ax.set_xticks(x, [c for c, _ in COLUNAS], rotation=45, ha="right", fontsize=8)
+        ax.set_title(rotulo_bucket.get(b, b), fontsize=10)
+        for xi, v in zip(x, vals):
+            if v != v:
+                continue
+            ax.text(xi, v + 0.5, f"{v:.1f}", ha="center", fontsize=8,
+                    color=COLOR_PRIMARY if v < 0.2 else COLOR_RISK)
+        ax.axvline(0.5, color="0.75", ls=":", lw=1)
+        ax.grid(axis="x", visible=False)
+
+    axes[0].set_ylabel("% de domicílios a suprimir")
+    milhar = f"{n:,}".replace(",", ".")
+    fig.suptitle(
+        f"Supressão necessária para k ≥ 20, por esquema de faixa (n = {milhar})",
+        x=0.02, ha="left", fontsize=11,
+    )
+    fig.text(
+        0.02, 0.005,
+        "À esquerda da linha pontilhada, largura fixa; à direita, número fixo de faixas.",
+        fontsize=8, color="0.35",
+    )
+    fig.tight_layout(rect=(0, 0.04, 1, 0.92))
+    salvar(fig, "esquemas_de_faixa")
+
+
+# ---------------------------------------------------------------- figura 4
+def fig_sensibilidade_k(dados: dict) -> None:
+    esquemas = dados.get("esquemas")
+    if not esquemas:
+        print("  sem esquemas no exp. 03 - figura de sensibilidade pulada")
+        return
+
+    n = dados["domicilios_usados"] - dados.get("fora_do_limite", {}).get("n", 0)
+    # A configuracao ESCOLHIDA vem primeiro e em destaque. A versao anterior
+    # desta figura mostrava "equipe + quartis" e nao mostrava "equipe +
+    # tercis" - as duas custam zero em todo o intervalo, entao a curva estava
+    # certa e a legenda induzia a ler a escolha errada. Quem monta slide a
+    # partir da figura escreve o que a legenda diz.
+    interesse = [
+        ("nu_ine", "tercis por bucket", "equipe + tercis (escolhida)", COLOR_PRIMARY, "-", "o", 2.6),
+        ("nu_micro_area", "tercis por bucket", "micro-área + tercis", COLOR_SECONDARY, "-", "s", 1.6),
+        ("nu_micro_area", "quartis por bucket", "micro-área + quartis", COLOR_SECONDARY, "--", "v", 1.6),
+        ("no_bairro_filtro", "tercis por bucket", "bairro + tercis", COLOR_RISK, ":", "d", 1.6),
+    ]
+
+    fig, ax = plt.subplots(figsize=(7.2, 3.6))
+    plotou = False
+    for bucket, esq, rotulo, cor, ls, mk, lw in interesse:
+        e = esquemas.get(bucket, {}).get(esq)
+        if not e:
+            continue
+        ks = limiares_de(e)
+        if not ks:
+            continue
+        ys = [100 * e[f"linhas_k_menor_{k}"] / n for k in ks]
+        ax.plot(ks, ys, ls, marker=mk, ms=4.5, lw=lw, color=cor, label=rotulo)
+        plotou = True
+
+    if not plotou:
+        print("  sem limiares no JSON - figura de sensibilidade pulada")
+        plt.close(fig)
+        return
+
+    ax.axvline(20, color="0.45", ls="--", lw=1)
+    topo = ax.get_ylim()[1]
+    ax.annotate(
+        "k = 20 (valor adotado)", xy=(21, topo * 0.45),
+        fontsize=8, color="0.35", ha="left", rotation=90, va="center",
+    )
+    ax.set_xlabel("k exigido")
+    ax.set_ylabel("% de domicílios a suprimir")
+    ax.set_title(
+        "Custo de utilidade em função de k, por configuração", loc="left", fontsize=11
+    )
+    ax.legend(frameon=False, fontsize=9, loc="upper left")
+    # Equipe + quartis fica exatamente sobre a escolhida (zero em todo o
+    # intervalo). Dizer isso e melhor que desenhar duas linhas identicas.
+    ax.text(
+        0.5, -0.26,
+        "Equipe + quartis custa zero no intervalo inteiro também, e coincide com a linha da escolhida.\n"
+        "O que separa as configurações não é o número de faixas — é o agrupamento.",
+        transform=ax.transAxes, ha="center", fontsize=8, color="0.35",
+    )
+    salvar(fig, "sensibilidade_k")
+
+
+# ---------------------------------------------------------------- figura 5
+def fig_agrupamentos(dados: dict) -> None:
+    """Espaco de trade-off: compacidade contra supressao do par.
+
+    Uma figura so, porque o argumento e a relacao entre as duas coisas -
+    o agrupamento mais compacto e justamente o que mais falha no par, e
+    e tambem o que revela mais localizacao para o mesmo k.
+    """
+    ag = dados.get("agrupamentos")
+    if not ag or not dados.get("com_tercil"):
+        print("  exp. 06 sem tercil - figura de agrupamentos pulada")
+        return
+
+    n = dados["domicilios"]
+    pts = []
+    for nome, m in ag.items():
+        if m.get("compacidade_mediana_m") is None:
+            continue
+        pts.append((
+            nome,
+            m["compacidade_mediana_m"],
+            100 * m["par_linhas_k_menor_20"] / n,
+            m["par_n_classes"],
+            m["par_k_min"],
+        ))
+    if not pts:
+        return
+
+    # Deslocamento por ponto, escolhido a mao: com cinco marcadores em duas
+    # regioes apertadas, a formula automatica sobrepoe os rotulos.
+    OFFSETS = {
+        "MDAV k=20": (72, 6, "left"),
+        "MDAV k=20 estratificado": (60, -32, "left"),
+        "par (equipe, micro-área)": (0, 26, "center"),
+        "micro-área só": (-14, -4, "right"),
+        "equipe (INE)": (0, 26, "center"),
+    }
+
+    fig, ax = plt.subplots(figsize=(7.6, 4.4))
+    for nome, comp, sup, classes, kmin in pts:
+        passa = kmin >= 20
+        cor = COLOR_PRIMARY if passa else COLOR_RISK
+        ax.scatter(
+            comp, sup, s=30 + classes * 2.2, color=cor,
+            alpha=0.75, edgecolor="white", linewidth=1.2, zorder=3,
+        )
+        dx, dy, ha = OFFSETS.get(nome, (0, 22, "center"))
+        ax.annotate(
+            f"{nome}\n{classes} classes · k mín {kmin}",
+            xy=(comp, sup), xytext=(dx, dy), textcoords="offset points",
+            ha=ha, fontsize=8, color=cor, zorder=4,
+        )
+
+    ax.axhline(0, color="0.6", lw=1, ls="--")
+    ax.set_xscale("log")
+    ax.set_xlabel("compacidade do agrupamento — distância mediana ao centro (m, escala log)")
+    ax.set_ylabel("% a suprimir no par (agrupamento, tercil)")
+    ax.set_ylim(-14, 104)
+    ax.set_xlim(35, 9000)
+    ax.set_title(
+        "Só um agrupamento passa — e não é o mais compacto", loc="left", fontsize=11
+    )
+    ax.text(
+        0.5, -0.30,
+        "Área do marcador ∝ nº de classes publicadas. Quanto mais à esquerda, mais precisa a "
+        "localização revelada\npara o mesmo k — o que torna o agrupamento mais compacto também "
+        "o de maior exposição locacional.",
+        transform=ax.transAxes, ha="center", fontsize=8, color="0.35",
+    )
+    fig.tight_layout()
+    salvar(fig, "agrupamentos")
+
+
+# ---------------------------------------------------------------- figura 6
+def fig_iloss_por_k(dados: dict) -> None:
+    """Supressao e perda de informacao no MESMO eixo de k.
+
+    Painel de cima: quantos domicilios o k exigido obriga a suprimir.
+    Painel de baixo: ILoss do par publicado ja contando essa supressao.
+
+    Sao duas leituras do mesmo custo. A de baixo e a que mostra o preco que a
+    de cima esconde: um agrupamento pode suprimir pouco e ainda assim custar
+    caro, porque generalizou muito antes de chegar ao k - e vice-versa.
+    """
+    ag = dados.get("agrupamentos")
+    if not ag or not dados.get("com_tercil"):
+        print("  exp. 06 sem tercil - figura de ILoss pulada")
+        return
+    if not any(f"par_iloss_k_" in c for m in ag.values() for c in m):
+        print("  exp. 06 sem ILoss por k (rode a versao nova) - figura pulada")
+        return
+
+    n = dados["domicilios"]
+    fig, (ax_sup, ax_il) = plt.subplots(
+        2, 1, figsize=(7.2, 5.8), sharex=True,
+        gridspec_kw={"height_ratios": [1, 1.15], "hspace": 0.12},
+    )
+
+    for nome, (cor, ls, mk) in PALETA_AGRUPAMENTO.items():
+        m = ag.get(nome)
+        if not m:
+            continue
+        ks = limiares_de({c.replace("par_", "", 1): 0 for c in m if c.startswith("par_linhas_k_menor_")})
+        ks = [k for k in ks if f"par_iloss_k_{k}" in m]
+        if not ks:
+            continue
+        ax_sup.plot(
+            ks, [100 * m[f"par_linhas_k_menor_{k}"] / n for k in ks],
+            linestyle=ls, marker=mk, ms=4, lw=1.6, color=cor, label=nome,
+        )
+        ax_il.plot(
+            ks, [m[f"par_iloss_k_{k}"] for k in ks],
+            linestyle=ls, marker=mk, ms=4, lw=1.6, color=cor, label=nome,
+        )
+
+    for ax in (ax_sup, ax_il):
+        ax.axvline(20, color="0.45", ls="--", lw=1, zorder=0)
+        ax.grid(True, axis="y", lw=0.5, alpha=0.4)
+
+    ax_sup.set_ylabel("% de domicílios a suprimir")
+    ax_sup.set_ylim(-4, 104)
+    ax_sup.set_title(
+        "O mesmo k, dois custos: registros perdidos e informação perdida",
+        loc="left", fontsize=11,
+    )
+    ax_sup.legend(frameon=False, fontsize=8.5, loc="center right", ncol=1)
+
+    ax_il.set_ylabel("ILoss do par publicado")
+    ax_il.set_ylim(-0.04, 1.04)
+    ax_il.set_xlabel("k exigido")
+    ax_il.axhline(1.0, color="0.6", lw=0.9, ls=":")
+    # O rotulo do k adotado vai no painel de baixo: e onde a faixa ao lado da
+    # linha esta livre em qualquer das cinco curvas.
+    ax_il.annotate(
+        "k = 20 (valor adotado)", xy=(20.8, 0.40), xycoords=("data", "axes fraction"),
+        fontsize=8, color="0.35", ha="left", rotation=90, va="center",
+    )
+    ax_il.annotate(
+        "supressão total", xy=(2.5, 0.955), fontsize=8, color="0.45", va="top",
+    )
+
+    ax_il.text(
+        0.5, -0.40,
+        "ILoss aqui já inclui a supressão: classe abaixo de k sobe à raiz da hierarquia e paga o custo "
+        "máximo.\nPor isso o agrupamento mais fino — de menor ILoss com k frouxo — é o que primeiro "
+        "dispara a curva quando k aperta.",
+        transform=ax_il.transAxes, ha="center", fontsize=8, color="0.35",
+    )
+    salvar(fig, "iloss_por_k")
+
+
+# ---------------------------------------------------------------- figura 7
+def _barra_de_escala(ax, metros, lat0, rotulo, y=0.06, x=0.06):
+    """Barra de escala em graus, convertidos na latitude do mapa."""
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    grau = metros / (111_320 * math.cos(math.radians(lat0)))
+    xa = x0 + (x1 - x0) * x
+    ya = y0 + (y1 - y0) * y
+    ax.plot([xa, xa + grau], [ya, ya], color="0.25", lw=2, solid_capstyle="butt")
+    ax.text(xa + grau / 2, ya + (y1 - y0) * 0.022, rotulo,
+            ha="center", va="bottom", fontsize=7.5, color="0.25")
+
+
+def fig_mapa_unidades() -> None:
+    """As tres unidades geocodificadas sobre o limite do municipio.
+
+    A figura existe por causa de um achado: as duas unidades de endereco
+    rural ("S/N, ZONA RURAL") cairam a 1,3 m uma da outra, no centro da
+    cidade - assinatura de geocodificador que nao resolve endereco rural e
+    devolve o centroide da localidade. Num municipio de ~14 km de lado e 56%
+    rural, isso desloca a distancia domicilio -> unidade de toda a parte
+    rural da base, e e a distancia que define o tercil publicado.
+
+    Nenhuma coordenada de domicilio ou de cidadao entra aqui: so as tres
+    unidades, que sao entidade institucional de endereco publico.
+    """
+    unidades = ler_unidades()
+    if not unidades:
+        print("  sem coordenadas em unidades_coordenadas.csv - mapa pulado")
+        return
+    aneis_mun = aneis_de(AQUI / MALHAS["municipio"])
+    if not aneis_mun:
+        print("  sem malha do município em malhas/ - mapa pulado")
+        return
+    aneis_uf = aneis_de(AQUI / MALHAS["uf"])
+
+    lat0 = sum(u["lat"] for u in unidades) / len(unidades)
+    lng0 = sum(u["lng"] for u in unidades) / len(unidades)
+    aspecto = 1 / math.cos(math.radians(lat0))
+
+    # Quem e suspeito: endereco sem numero em zona rural nao geocodifica.
+    def suspeita(u):
+        end = (u.get("endereco_referencia") or "").upper()
+        return "ZONA RURAL" in end or "S/N" in end
+
+    fig = plt.figure(figsize=(7.8, 4.8))
+    gs = fig.add_gridspec(2, 2, width_ratios=[1.55, 1], height_ratios=[1.15, 1],
+                          wspace=0.16, hspace=0.28)
+    ax = fig.add_subplot(gs[:, 0])
+    ax_zoom = fig.add_subplot(gs[0, 1])
+    ax_loc = fig.add_subplot(gs[1, 1])
+
+    # ------------------------------------------------------------ principal
+    for anel in aneis_mun:
+        xs, ys = zip(*anel)
+        ax.fill(xs, ys, color=COLOR_PRIMARY, alpha=0.07, zorder=0)
+        ax.plot(xs, ys, color=COLOR_PRIMARY, lw=1.4, zorder=1)
+
+    for u in unidades:
+        cor = COLOR_RISK if suspeita(u) else COLOR_PRIMARY
+        ax.scatter(u["lng"], u["lat"], s=52, color=cor, marker="o",
+                   edgecolor="white", linewidth=1.2, zorder=4)
+
+    todos_lng = [x for a in aneis_mun for x, _ in a]
+    todos_lat = [y for a in aneis_mun for _, y in a]
+    mx = (max(todos_lng) - min(todos_lng)) * 0.06
+    ax.set_xlim(min(todos_lng) - mx, max(todos_lng) + mx)
+    ax.set_ylim(min(todos_lat) - mx, max(todos_lat) + mx)
+    ax.set_aspect(aspecto)
+
+    # Retangulo que marca o recorte ampliado ao lado.
+    lado = 0.010
+    ax.add_patch(plt.Rectangle(
+        (lng0 - lado / 2, lat0 - lado / 2 * aspecto), lado, lado * aspecto,
+        fill=False, ec="0.35", lw=0.9, ls="--", zorder=5,
+    ))
+    # A leste do recorte o limite do municipio passa rente; o rotulo vai para
+    # dentro do poligono, onde ha espaco livre.
+    ax.annotate("as três unidades", xy=(lng0 - lado / 2, lat0), xytext=(-10, 20),
+                textcoords="offset points", fontsize=8, color="0.3", ha="right",
+                arrowprops=dict(arrowstyle="-", color="0.5", lw=0.8))
+
+    largura_km = haversine_m(lat0, min(todos_lng), lat0, max(todos_lng)) / 1000
+    _barra_de_escala(ax, 2000, lat0, "2 km")
+    ax.set_title(f"{MUNICIPIO} — {largura_km:.0f} km de leste a oeste",
+                 loc="left", fontsize=10.5)
+    for lado_ in ("top", "right", "bottom", "left"):
+        ax.spines[lado_].set_visible(False)
+    ax.set_xticks([]); ax.set_yticks([])
+
+    # ----------------------------------------------------------------- zoom
+    meio = 0.0022
+    ax_zoom.set_xlim(lng0 - meio, lng0 + meio)
+    ax_zoom.set_ylim(lat0 - meio / aspecto, lat0 + meio / aspecto)
+    ax_zoom.set_aspect(aspecto)
+    for anel in aneis_mun:
+        xs, ys = zip(*anel)
+        ax_zoom.plot(xs, ys, color=COLOR_PRIMARY, lw=1.2)
+    for u in unidades:
+        cor = COLOR_RISK if suspeita(u) else COLOR_PRIMARY
+        ax_zoom.scatter(u["lng"], u["lat"], s=90, color=cor, marker="o",
+                        edgecolor="white", linewidth=1.4, zorder=4, alpha=0.85)
+
+    par = [u for u in unidades if suspeita(u)]
+    if len(par) >= 2:
+        d = haversine_m(par[0]["lat"], par[0]["lng"], par[1]["lat"], par[1]["lng"])
+        ax_zoom.annotate(
+            f"{len(par)} unidades rurais\na {d:.1f} m uma da outra",
+            xy=(par[0]["lng"], par[0]["lat"]), xytext=(10, -26),
+            textcoords="offset points", fontsize=7.5, color=COLOR_RISK,
+            arrowprops=dict(arrowstyle="-", color=COLOR_RISK, lw=0.8),
+        )
+    urbana = [u for u in unidades if not suspeita(u)]
+    if urbana:
+        ax_zoom.annotate(
+            "unidade com\nendereço numerado",
+            xy=(urbana[0]["lng"], urbana[0]["lat"]), xytext=(-6, 20),
+            textcoords="offset points", fontsize=7.5, color=COLOR_PRIMARY,
+            ha="right",
+            arrowprops=dict(arrowstyle="-", color=COLOR_PRIMARY, lw=0.8),
+        )
+    _barra_de_escala(ax_zoom, 100, lat0, "100 m", y=0.05, x=0.05)
+    ax_zoom.set_title("recorte: 500 m de lado", loc="left", fontsize=9)
+    for lado_ in ("top", "right", "bottom", "left"):
+        ax_zoom.spines[lado_].set_visible(False)
+    ax_zoom.set_xticks([]); ax_zoom.set_yticks([])
+
+    # ------------------------------------------------------------ localizador
+    for anel in aneis_uf:
+        xs, ys = zip(*anel)
+        ax_loc.fill(xs, ys, color="0.88", zorder=0)
+        ax_loc.plot(xs, ys, color="0.6", lw=0.8, zorder=1)
+    ax_loc.scatter([lng0], [lat0], s=26, color=COLOR_RISK, zorder=3,
+                   edgecolor="white", linewidth=0.9)
+    ax_loc.set_aspect(aspecto)
+    ax_loc.set_title("Rio Grande do Norte", loc="left", fontsize=9)
+    for lado_ in ("top", "right", "bottom", "left"):
+        ax_loc.spines[lado_].set_visible(False)
+    ax_loc.set_xticks([]); ax_loc.set_yticks([])
+
+    fig.text(
+        0.5, 0.005,
+        "Endereço rural sem número não geocodifica: o serviço devolve o centroide da localidade. "
+        "As três unidades\nficam a menos de 200 m entre si num município de ~14 km de lado e 56% "
+        "rural — e é dessa coordenada que sai o tercil.",
+        ha="center", fontsize=7.8, color="0.35",
+    )
+    fig.subplots_adjust(bottom=0.13)
+    salvar(fig, "mapa_unidades")
+
+
+# ---------------------------------------------------------------- figura 8
+#
+# Os dois portoes sao qualitativos e vem dos experimentos 05 e 06; ficam
+# explicitos aqui porque sao exatamente o que as curvas de custo NAO mostram.
+#
+#   territorio real  o agrupamento corresponde a um lugar unico, e aninha na
+#                    hierarquia de generalizacao do endereco. Micro-area
+#                    reprova: o codigo e reaproveitado entre equipes, a pureza
+#                    urbano/rural e 0,652 e Prec e indefinivel. MDAV reprova
+#                    por outro motivo - "cluster 7" nao e entidade nenhuma,
+#                    e a hierarquia dele e derivada das coordenadas.
+#   k do par         k >= 20 na classe (agrupamento, tercil), que e o que
+#                    efetivamente vai publicado.
+#
+PORTOES = {
+    #                               território real, k do par, motivo da reprova
+    "equipe (INE)":              (True,  True,  ""),
+    "par (equipe, micro-área)":  (True,  False, "k mín 2 — só passa suprimindo"),
+    "micro-área só":             (False, False, "código reusado · pureza 0,652 · Prec —"),
+    "MDAV k=20":                 (False, False, "cluster sem referente · Prec —"),
+    "MDAV k=20 estratificado":   (False, False, "cluster sem referente · Prec —"),
+}
+
+COLUNAS = [
+    (0.010, "candidato"),
+    (0.365, "território\nreal?"),
+    (0.495, "k ≥ 20\nno par?"),
+    (0.630, "a suprimir\nem k=20"),
+    (0.755, "ILoss\nem k=20"),
+    (0.890, "raio\nrevelado"),
+]
+
+
+def fig_criterios(dados: dict) -> None:
+    """A decisao inteira numa figura: dois portões, depois três custos.
+
+    As curvas de custo nao conseguem mostrar a escolha porque, nos dois eixos
+    de custo isolados, quem vence em k=20 e micro-area - 0,1% a suprimir e
+    ILoss 0,043, melhor que a equipe nos dois. Ela e eliminada por um criterio
+    que nao esta em nenhum dos eixos: nao e um lugar. Esta figura poe o
+    criterio de volta.
+    """
+    ag = dados.get("agrupamentos")
+    if not ag or not dados.get("com_tercil"):
+        print("  exp. 06 sem tercil - figura de critérios pulada")
+        return
+    n = dados["domicilios"]
+
+    ordem = [k for k in PORTOES if k in ag]
+    fig, ax = plt.subplots(figsize=(8.8, 3.9))
+    ax.set_xlim(0, 1); ax.set_ylim(-0.30, len(ordem) + 1.55)
+    ax.axis("off")
+
+    topo = len(ordem) + 0.62
+    for x, rot in COLUNAS:
+        ax.text(x, topo, rot, fontsize=8.5, color="0.35", va="bottom",
+                ha="left" if x < 0.2 else "center", linespacing=1.5)
+    ax.plot([0, 1], [topo - 0.16, topo - 0.16], color="0.7", lw=0.9)
+
+    for i, nome in enumerate(ordem):
+        m = ag[nome]
+        y = len(ordem) - 1 - i + 0.30
+        lugar, passa, motivo = PORTOES[nome]
+        vence = lugar and passa
+
+        if vence:
+            ax.add_patch(plt.Rectangle((-0.004, y - 0.34), 1.008, 0.78,
+                                       color=COLOR_PRIMARY, alpha=0.08, zorder=0))
+        tinta = COLOR_PRIMARY if vence else "0.45"
+
+        ax.text(COLUNAS[0][0], y + 0.06, nome, fontsize=9, color=tinta,
+                fontweight="bold" if vence else "normal", va="center")
+        if motivo:
+            ax.text(COLUNAS[0][0], y - 0.26, motivo, fontsize=7.3, color="0.55", va="center")
+
+        for x, ok in ((COLUNAS[1][0], lugar), (COLUNAS[2][0], passa)):
+            cor = COLOR_PRIMARY if ok else COLOR_RISK
+            ax.add_patch(plt.Rectangle((x - 0.042, y - 0.14), 0.084, 0.40,
+                                       color=cor, alpha=0.14, zorder=1))
+            ax.text(x, y + 0.06, "sim" if ok else "não", fontsize=9, color=cor,
+                    ha="center", va="center", fontweight="bold", zorder=2)
+
+        sup = 100 * m["par_linhas_k_menor_20"] / n
+        vals = [
+            (COLUNAS[3][0], f"{sup:.1f}%".replace(".", ",")),
+            (COLUNAS[4][0], f"{m['par_iloss_k_20']:.3f}".replace(".", ",")),
+            (COLUNAS[5][0], f"{m['compacidade_mediana_m']:,.0f} m".replace(",", ".")),
+        ]
+        for x, txt in vals:
+            ax.text(x, y + 0.06, txt, fontsize=9, color=tinta, ha="center", va="center")
+
+    ax.plot([0, 1], [-0.08, -0.08], color="0.7", lw=0.9)
+    ax.text(
+        0.0, -0.46,
+        "Os dois portões decidem; as três colunas de custo só comparam quem passou nos dois. "
+        "Isolados, os custos escolheriam\nerrado: em k = 20 micro-área suprime 0,1% com ILoss 0,043 — "
+        "melhor que a equipe nos dois — e mesmo assim está fora,\nporque o código é reaproveitado entre "
+        "equipes e o agrupamento não corresponde a um lugar.",
+        fontsize=8, color="0.35", va="top", linespacing=1.6,
+    )
+    ax.set_title(
+        "A decisão: dois portões eliminam, três custos comparam o que sobra",
+        loc="left", fontsize=11, pad=14,
+    )
+    salvar(fig, "criterios")
+
+
+# ---------------------------------------------------------------- figura 9
+CORES_EQUIPE = ["#2E4057", "#F18F01", "#9E2A2B", "#2A9D8F", "#7E57C2"]
+ESTILOS_EQUIPE = ["-", "--", "-.", ":", (0, (3, 1, 1, 1))]
+
+
+def fig_faixas(dados: dict) -> None:
+    """A geometria das faixas de distancia, sem tocar em domicilio.
+
+    Um painel por equipe, cada um enquadrado no proprio raio externo. A
+    versao anterior punha as quatro num mapa so: os raios vao de centenas de
+    metros a quase dez quilometros, entao os aneis internos sumiam, os
+    externos saiam cortados pela moldura e as duas fronteiras de cada equipe
+    liam-se como duas equipes diferentes.
+
+    O que se pinta sao as FAIXAS, nao as fronteiras - sao tres por equipe, e
+    as duas linhas sao onde uma acaba e a outra comeca.
+
+    A outra metade da classe, a equipe, nao tem geometria na base: nao existe
+    malha de area nem de micro-area no e-SUS. E os domicilios nao entram -
+    casco convexo ou dispersao colorida seria publicar o mapa das casas, que
+    e o vazamento que a migration 14 fechou.
+    """
+    faixas = dados.get("faixas_da_escolha")
+    if not faixas:
+        print("  exp. 06 sem raios de corte (rode a versão nova) - figura de faixas pulada")
+        return
+    unidades = {u["nu_cnes"]: u for u in ler_unidades()}
+    aneis_mun = aneis_de(AQUI / MALHAS["municipio"])
+    if not unidades or not aneis_mun:
+        print("  sem unidades ou sem malha - figura de faixas pulada")
+        return
+
+    itens = [(r, f) for r, f in sorted(faixas.items())
+             if f.get("cortes_m") and unidades.get(str(f.get("unidade_principal")))]
+    if not itens:
+        return
+    ncols = 2
+    nrows = math.ceil(len(itens) / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(7.8, 3.9 * nrows))
+    axes = np.atleast_1d(axes).ravel()
+
+    def circulo(lat0, lng0, raio_m, npts=240):
+        t = np.linspace(0, 2 * np.pi, npts)
+        dlat = raio_m / 111_320.0
+        dlng = raio_m / (111_320.0 * math.cos(math.radians(lat0)))
+        return lng0 + dlng * np.cos(t), lat0 + dlat * np.sin(t)
+
+    for ax, (rot, f) in zip(axes, itens):
+        u = unidades[str(f["unidade_principal"])]
+        cor = CORES_EQUIPE[itens.index((rot, f)) % len(CORES_EQUIPE)]
+        cortes = f["cortes_m"]
+        lat0, lng0 = u["lat"], u["lng"]
+        aspecto = 1 / math.cos(math.radians(lat0))
+
+        for anel in aneis_mun:
+            xs, ys = zip(*anel)
+            ax.fill(xs, ys, color="0.94", zorder=0)
+            ax.plot(xs, ys, color="0.62", lw=1.0, zorder=1)
+
+        # Faixas, da mais externa para a mais interna: a de fora e pintada
+        # primeiro e a de dentro cobre, senao a interna some.
+        for raio, alpha in zip(reversed(cortes), (0.13, 0.26)):
+            xs, ys = circulo(lat0, lng0, raio)
+            ax.fill(xs, ys, color=cor, alpha=alpha, zorder=2, linewidth=0)
+        for raio in cortes:
+            xs, ys = circulo(lat0, lng0, raio)
+            ax.plot(xs, ys, color=cor, lw=1.5, zorder=3)
+
+        for uu in unidades.values():
+            ax.scatter(uu["lng"], uu["lat"], s=30, color="0.15", marker="s",
+                       edgecolor="white", linewidth=0.9, zorder=5)
+
+        r_max = cortes[-1] * 1.30
+        dlat = r_max / 111_320.0
+        dlng = r_max / (111_320.0 * math.cos(math.radians(lat0)))
+        ax.set_xlim(lng0 - dlng, lng0 + dlng)
+        ax.set_ylim(lat0 - dlat, lat0 + dlat)
+        ax.set_aspect(aspecto)
+
+        escala = 10 ** math.floor(math.log10(cortes[-1]))
+        if cortes[-1] / escala >= 5:
+            escala *= 2
+        rotulo_escala = (f"{escala/1000:.0f} km" if escala >= 1000
+                         else f"{escala:.0f} m")
+        _barra_de_escala(ax, escala, lat0, rotulo_escala, y=0.05, x=0.05)
+
+        cortes_txt = " · ".join(
+            (f"{c/1000:.1f} km".replace(".", ",") if c >= 1000 else f"{c:.0f} m")
+            for c in cortes
+        )
+        # "domicílios" por extenso em vez de "n=", que se lia como o tamanho da
+        # faixa. Os tamanhos das classes publicadas continuam no JSON da 06,
+        # fora da figura.
+        ax.set_title(f"{rot} · {f['n']} domicílios · cortes {cortes_txt}",
+                     loc="left", fontsize=9, color=cor)
+        for l in ("top", "right", "bottom", "left"):
+            ax.spines[l].set_visible(False)
+        ax.set_xticks([]); ax.set_yticks([])
+
+    for ax in axes[len(itens):]:
+        ax.axis("off")
+
+    fig.suptitle("A geometria das faixas — e o que ela não mostra",
+                 x=0.012, y=0.995, ha="left", va="top", fontsize=12)
+    fig.text(
+        0.012, 0.012,
+        "Cada painel é uma equipe, enquadrado no próprio raio externo — as escalas diferem, veja a barra de cada um. "
+        "As duas\nlinhas são as fronteiras dos três tercis, não duas equipes. Quadrados: as três unidades, que caem "
+        "quase no mesmo\nponto. A equipe não aparece porque não tem geometria na base; os domicílios não entram "
+        "porque o mapa das casas\né o vazamento que suprimimos.",
+        ha="left", va="bottom", fontsize=8, color="0.35", linespacing=1.6,
+    )
+    fig.subplots_adjust(top=0.90, bottom=0.14, hspace=0.20, wspace=0.20)
+    salvar(fig, "faixas")
+
+
+def main() -> None:
+    set_latex_style()
+    print(f"Lendo resultados de {RESULTADOS.relative_to(RAIZ)}\n")
+
+    exp02 = ultimo("02_k_por_nivel")
+    if exp02:
+        fig_k_por_nivel(exp02)
+
+    exp03 = ultimo("03_faixa_de_distancia")
+    if exp03:
+        fig_distancia(exp03)
+        fig_esquemas(exp03)
+        fig_sensibilidade_k(exp03)
+
+    exp06 = ultimo("06_agrupamentos")
+    if exp06:
+        fig_agrupamentos(exp06)
+        fig_iloss_por_k(exp06)
+        fig_criterios(exp06)
+        fig_faixas(exp06)
+
+    fig_mapa_unidades()
+
+    print(f"\nFiguras em {SAIDA.relative_to(RAIZ)}/ (.pdf para o texto, .png para slides)")
+    print(f"gerado em {datetime.now():%Y-%m-%d %H:%M}")
+
+
+if __name__ == "__main__":
+    main()
