@@ -23,12 +23,15 @@ load_dotenv()
 _REQUIRED_VARS = ("DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME")
 
 
-def _build_url() -> URL:
+def _build_url(database: str | None = None) -> URL:
     """Monta a URL de conexão a partir do ambiente.
 
     Usa `URL.create` em vez de uma f-string para que senhas com
     caracteres especiais (`@`, `:`, `/`, `'`, ...) sejam corretamente
     escapadas — montar a string manualmente quebra o parsing do host.
+
+    `database` troca só o banco, mantendo host/usuário do `.env` — é como
+    a pipeline aponta para cada versão (`scripts/versionamento.py`).
     """
     missing = [var for var in _REQUIRED_VARS if not os.getenv(var)]
     if missing:
@@ -42,13 +45,16 @@ def _build_url() -> URL:
         password=os.environ["DB_PASSWORD"],
         host=os.environ["DB_HOST"],
         port=int(os.environ["DB_PORT"]),
-        database=os.environ["DB_NAME"],
+        database=database or os.environ["DB_NAME"],
     )
 
 
-def create_db_engine() -> Engine:
-    """Cria um novo engine. Útil para testes ou conexões isoladas."""
-    return create_engine(_build_url(), future=True, connect_args={"client_encoding": "utf8"})
+def create_db_engine(database: str | None = None, **kwargs) -> Engine:
+    """Cria um novo engine, por padrão no banco `DB_NAME`. Útil para testes,
+    conexões isoladas ou para abrir uma versão específica da base."""
+    return create_engine(
+        _build_url(database), future=True, connect_args={"client_encoding": "utf8"}, **kwargs
+    )
 
 
 # Engine compartilhado, importado pelas migrations.

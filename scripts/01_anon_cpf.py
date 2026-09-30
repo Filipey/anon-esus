@@ -6,7 +6,8 @@ Características:
 - **Atômica**: roda inteira dentro de uma única transação. Qualquer
   falha faz rollback e o banco permanece no estado original.
 - **Determinística**: o mesmo CPF original é sempre mapeado para o mesmo
-  CPF falso em todas as colunas, preservando vínculos entre tabelas.
+  CPF falso em todas as colunas, preservando vínculos entre tabelas — e,
+  com a semente `CPF_SEED`, para o mesmo CPF falso em toda execução.
 - **Preserva o formato**: se o valor armazenado tinha pontuação
   (`000.000.000-00`) ou zeros à esquerda, o CPF falso é gravado no mesmo
   formato.
@@ -29,6 +30,7 @@ alguma delas aparecer em `CPF_COLUMNS` por engano.
 
 from __future__ import annotations
 
+import random
 import re
 from dataclasses import dataclass
 
@@ -38,6 +40,10 @@ from sqlalchemy import Engine, text
 from sqlalchemy.engine import Connection
 
 log = get_logger("01_anon_cpf")
+
+# Semente do sorteio dos CPFs falsos: a mesma base sempre gera os mesmos
+# CPFs, então uma versão refeita pela pipeline sai idêntica à anterior.
+CPF_SEED = 20260930
 
 
 @dataclass(frozen=True)
@@ -188,6 +194,26 @@ def _generate_unique(used: set[str]) -> str:
             return candidate
 
 
+def _build_fake_map(raw_values: set[str]) -> dict[str, str]:
+    """norma (11 dígitos) -> CPF falso (11 dígitos), 1:1 e único.
+
+    Reprodutível entre execuções: `CPF.generate()` sorteia pelo `random`
+    global, então o estado é semeado com `CPF_SEED` (e restaurado depois),
+    e os valores são percorridos em ordem — iterar o `set` direto dependeria
+    do hash aleatório de string do Python, que muda a cada processo.
+    """
+    estado = random.getstate()
+    random.seed(CPF_SEED)
+    try:
+        norm_to_fake: dict[str, str] = {}
+        used_fakes: set[str] = set()
+        for norm in sorted({_normalize(raw) for raw in raw_values}):
+            norm_to_fake[norm] = _generate_unique(used_fakes)
+        return norm_to_fake
+    finally:
+        random.setstate(estado)
+
+
 def _column_exists(conn: Connection, col: CpfColumn) -> bool:
     found = conn.execute(
         text(
@@ -254,14 +280,9 @@ def run(engine: Engine) -> None:
             log.info("nenhum CPF a anonimizar.")
             return
 
-        # 3) Mapeamento determinístico:
+        # 3) Mapeamento determinístico e reprodutível:
         #    norma (11 dígitos) -> CPF falso (11 dígitos), 1:1 e único.
-        norm_to_fake: dict[str, str] = {}
-        used_fakes: set[str] = set()
-        for raw in raw_values:
-            norm = _normalize(raw)
-            if norm not in norm_to_fake:
-                norm_to_fake[norm] = _generate_unique(used_fakes)
+        norm_to_fake = _build_fake_map(raw_values)
 
         #    valor bruto -> CPF falso já formatado como o original.
         raw_to_fake = {
