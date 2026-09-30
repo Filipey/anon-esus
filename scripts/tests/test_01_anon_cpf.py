@@ -175,3 +175,23 @@ def test_atomicidade_rollback_em_falha(pg_engine, monkeypatch):
     assert cidadao[1][0] == CPF_C
     assert prof == CPF_A_RAW
     assert fat == CPF_A_RAW
+
+
+def test_mapeamento_reprodutivel_entre_execucoes():
+    """Mesma entrada -> mesmos CPFs falsos, independente da ordem de iteração
+    do set e do estado prévio do `random` global (que é restaurado)."""
+    import random
+
+    valores = {CPF_A, CPF_B, CPF_C, CPF_A_RAW}
+    random.seed(1)
+    estado_antes = random.getstate()
+    primeiro = m._build_fake_map(valores)
+    assert random.getstate() == estado_antes
+
+    random.seed(999)
+    segundo = m._build_fake_map(set(sorted(valores, reverse=True)))
+
+    assert primeiro == segundo
+    assert len(primeiro) == 3  # CPF_A e CPF_A_RAW são o mesmo CPF
+    assert len(set(primeiro.values())) == len(primeiro)
+    assert all(CPF.validate(v) for v in primeiro.values())
