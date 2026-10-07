@@ -143,6 +143,44 @@ Achados de dado que entram no desenho das migrations:
 - ~2% das pessoas já têm, na original, data de nascimento posterior à primeira medição;
 - a antropometria tem erros de digitação (peso de 500 kg, IMC de 2.721), absorvidos pelo corte de extremos.
 
+## Andamento do Trilho A (07/10/2026)
+
+| Passo | Estado | Onde |
+|---|---|---|
+| Sal e semente fora do git | feito | `scripts/segredo.py`, `ANON_SEGREDO` no `.env` |
+| Estatísticas de referência da original | feito | `01_referencia.py` |
+| Algoritmos e varredura de k | feito; k = 5 | `scripts/k_anonimato.py`, `02_varredura_k.py` |
+| Migration da antropometria | feito (08 reescrita) | `scripts/08_anon_antropometrico.py` |
+| Migration do núcleo | feito (nova 15) | `scripts/15_anon_k_anonimato.py` |
+| Migration de doenças raras | feito (nova 16) | `scripts/16_anon_diagnosticos.py` |
+| Kit DP e varredura de ε | varredura feita; **ε a escolher** | `03_kit_dp.py` |
+
+A data de nascimento do k-anonimato ficou numa migration nova (15), e não na
+04: ela precisa do tercil (06) e da equipe já fictícia (13). A 04 continua;
+o dia que ela troca é sobrescrito pela 15.
+
+### Varredura de ε (δ = 10⁻⁶, mesmo ρ por marginal)
+
+Distância de variação total entre a marginal com ruído e a verdadeira:
+
+| ε | sexo x idade5 x equipe | sexo x idade5 x raça x escol. | por código de diagnóstico | peso x sexo x idade5 | modelo: combinações não medidas |
+|---|---:|---:|---:|---:|---:|
+| 0,5 | 0,26 | 0,76 | 0,47 | 0,67 | 0,32 a 0,51 |
+| 1 | 0,15 | 0,66 | 0,31 | 0,59 | 0,21 a 0,35 |
+| 2 | 0,07 | 0,53 | 0,18 | 0,46 | 0,12 a 0,26 |
+| **5** | **0,03** | **0,31** | **0,09** | **0,27** | **0,06 a 0,22** |
+| 10 | 0,02 | 0,20 | 0,05 | 0,16 | 0,06 a 0,20 |
+| 20 | 0,01 | 0,12 | 0,03 | 0,09 | 0,05 a 0,20 |
+
+- A fidelidade do modelo nas combinações que não foram medidas para de
+  melhorar perto de ε = 5: daí em diante o limite é o que o modelo não
+  mediu, não o ruído.
+- Doença rara: com ε = 5 o ruído por código tem σ ≈ 12 pessoas; um código com
+  1 a 4 pessoas fica indistinguível de zero — é a proteção funcionando.
+- Primeira versão usava antropometria por kg x idade em anos (~30 mil
+  células) e diagnóstico x sexo x faixa (~40 mil): com 11 mil pessoas, só
+  ruído (TVD ~0,8 com ε = 1). A granularidade foi ajustada.
+
 ## Pontos de desenho em aberto
 
 1. **Datas de atendimento.** Mudar o nascimento e manter os atendimentos

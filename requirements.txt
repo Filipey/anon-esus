@@ -13,3 +13,11 @@ testing.postgresql
 matplotlib
 seaborn
 pandas
+
+# k-anonimato (scripts/k_anonimato.py, migrations 08/15/16)
+numpy
+
+# kit DP (experimentos/k-anonimato-dp/03_kit_dp.py): ruído gaussiano discreto
+# e modelo gráfico do private-pgm (traz o JAX)
+opendp
+mbi @ git+https://github.com/ryan112358/private-pgm.git

@@ -29,6 +29,10 @@ scripts/
   12_anon_ip_logs.py              # migration: exclui logs de acesso/auditoria e o IP
   13_anon_ine.py                  # migration: INE de equipe -> código fictício
   14_anon_territorio.py           # migration: coordenada de visita e micro-área -> suprimidas
+  15_anon_k_anonimato.py          # migration: k-anonimato (k=5) do núcleo de quase-identificadores
+  16_anon_diagnosticos.py         # migration: diagnóstico raro (< k pessoas) -> categoria ou suprimido
+  k_anonimato.py                  # algoritmos de k-anonimato usados pelas migrations 08/15/16 (não é migration)
+  segredo.py                      # sais e sementes derivados de ANON_SEGREDO (não é migration)
   audit_schema.py                 # ferramenta: reaudita o schema real (não é migration)
   pipeline_report.py              # relatório de auditoria antes/depois (não é migration)
   pipeline_logging.py             # logging centralizado (arquivo + console)
@@ -424,24 +428,21 @@ Colunas declaradas em `DOCUMENT_COLUMNS` no topo de
 categoria "Documento/anexo" de `docs/auditoria_schema.md` (que mistura FK,
 conteúdo, metadado e flag de status).
 
-## Migration 08 — Dado antropométrico (hash provisório)
+## Migration 08 — Antropometria (corte de extremos + microagregação)
 
-O tratamento definitivo (microagregação/truncamento/differential privacy)
-ainda não foi definido. Como medida provisória, substitui peso, altura,
-perímetro cefálico e circunferência abdominal por um hash determinístico
-do valor original (`md5(valor || sal)`), preservando o tipo da coluna
-(numérico vira outro número, texto vira string hexadecimal truncada).
+Substitui o hash provisório, que destruía o dado e era revertido por força
+bruta. Por variável (peso, altura, IMC, perímetro cefálico, circunferência
+abdominal, perímetro de panturrilha, altura uterina): valores abaixo do
+quantil 0,1% ou acima de 99,9% vão para a faixa da ponta (erros de digitação
+e extremos visíveis), e os valores ordenados são agrupados em blocos com
+pelo menos `K = 5` pessoas distintas; cada valor vira a mediana do bloco.
 
-**Isto não é uma proteção robusta**: por serem campos numéricos de baixa
-cardinalidade, o hash não impede um ataque de força bruta que pré-calcule
-o hash de todo o range plausível — serve só como contenção temporária até
-o DP entrar. A lista de colunas em `ANTHRO_COLUMNS`
-(`scripts/08_anon_antropometrico.py`) já foi confirmada contra o schema
-físico real (`docs/auditoria_schema.md`, categoria "Antropometria") — a
-primeira versão, baseada só na documentação do DW, tinha dois nomes de
-coluna errados e não cobria `ta_/tb_/tl_medicao`, a tabela que concentra
-os sinais vitais de cada atendimento (peso, altura, perímetro cefálico,
-circunferência abdominal, perímetro de panturrilha, IMC, altura uterina).
+A regra vira uma tabela de faixas calculada em `tb_medicao` (que liga cada
+medição à pessoa) e aplicada por valor a todas as colunas de
+`ANTHRO_COLUMNS`, inclusive DW — o mesmo peso vira o mesmo número em
+qualquer tabela. O IMC de `ta_/tb_/tl_medicao` é recalculado do peso e da
+altura publicados. Distorção medida: Wasserstein ~0,1% do desvio padrão,
+correlação peso x altura mantida (`experimentos/k-anonimato-dp/`).
 
 ## Migration 09 — Nome do cidadão
 
@@ -572,6 +573,40 @@ geográfico, é marcador de origem étnica — dado sensível pela LGPD, que
 pertence à análise de atributo sensível da fase 2. A auditoria passou a
 categorizá-lo como "Território indígena" para não voltar a passar
 despercebido.
+
+## Migration 15 — k-anonimato do núcleo de quase-identificadores
+
+Com as migrations 01-14, 81% das pessoas ainda eram únicas por sexo +
+mês/ano de nascimento + equipe + raça/cor. Aplica k = 5 sobre o modelo de
+ameaça decidido em 07/10/2026: sexo, data de nascimento, equipe, tercil de
+distância, raça/cor, escolaridade (5 níveis) e estado civil. O algoritmo
+(`k_anonimato.nucleo_adaptativo`) corta por ciclo de vida, suprime estado
+civil, escolaridade, raça/cor e tercil (nessa ordem) em grupos com menos de
+k pessoas, absorve grupos residuais pequenos e microagrega a data de
+nascimento em blocos de pelo menos k (mediana do bloco). Município de
+nascimento, de residência e ocupação com menos de k pessoas viram nulo.
+
+População: todo `tb_cidadao` e as pessoas que só existem no cadastro CDS.
+Propagação: `ta/tb/tl_cidadao` pelo código do cidadão; cadastro CDS pela
+cadeia de versões, CPF ou CNS; DW e demais tabelas com data de nascimento
+pelo CPF/CNS. Linha sem pessoa recebe data microagregada na própria tabela.
+Suprimido vira nulo no operacional (raça: "sem informação") e "não
+informado" no DW. **Confere o k sobre os valores publicados e aborta sem
+gravar se alguma classe ficar abaixo de k.** Parâmetros, fronteira medida e
+justificativa em `experimentos/k-anonimato-dp/README.md`.
+
+## Migration 16 — Diagnósticos raros
+
+Todo código CID-10/CIAP-2 publicado passa a ter pelo menos k = 5 pessoas
+distintas. Recodificação global por código: CID raro sobe para a categoria
+de 3 caracteres (linha própria em `tb_cid10`) e, se ainda raro, é
+suprimido; CIAP raro é suprimido (o catálogo não tem nível intermediário).
+Raridade por pessoas distintas nos problemas do DW; código só fora deles é
+raro com menos de k linhas (teto para pessoas). Colunas: as com chave para
+`tb_cid10`/`tb_ciap`/`tb_dim_cid`/`tb_dim_ciap` em tabelas de dado de
+pessoa, mais as cópias `ta_`/`tl_`; no DW, suprimido vira "não informado" e
+a categoria que faltar na dimensão é criada. Na base real, ~2% das linhas
+com diagnóstico mudam.
 
 ## Auditoria do schema (`scripts/audit_schema.py`)
 
