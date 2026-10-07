@@ -48,6 +48,18 @@ DOCUMENT_COLUMNS: list[DocumentColumn] = [
     DocumentColumn("public", "tb_arquivo", "no_arquivo"),
     DocumentColumn("public", "tb_recebimento_item", "no_arquivo"),
     DocumentColumn("public", "tb_migracao_estrutura", "no_arquivo_migracao"),
+    # Conteúdo binário com dado de paciente, achado no inventário da fase 2
+    # (set/2026). Nenhum é lido pelos relatórios do PEC; são carga de
+    # transmissão ou cópia de registro já presente nas tabelas normais.
+    # JSON enviado à RNDS (identificação do cidadão + vacinação): 168 mil.
+    DocumentColumn("public", "tb_envio_rnds", "bl_json_envio"),
+    # Fichas CDS serializadas para envio ao centralizador (nome, CPF, CNS,
+    # INE, endereço, texto livre): 803 mil. A 13 já registrava que o INE de
+    # dentro deste blob sobrevivia.
+    DocumentColumn("public", "tb_dado_transp", "im_dado_serializado"),
+    # Conteúdo do atendimento antes de uma retificação (JSON, inclui SOAP).
+    DocumentColumn("public", "tb_retificacao_atend", "bl_conteudo_atendimento"),
+    DocumentColumn("public", "ta_retificacao_atend", "bl_conteudo_atendimento"),
 ]
 
 # Placeholder usado quando a coluna e NOT NULL no banco real (ex.:

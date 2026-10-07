@@ -40,8 +40,7 @@ gerador de CNS.
 **Fora de escopo de proposito.** `co_equipe`/`co_dim_equipe` sao chaves
 substitutas opacas - preservam o vinculo sem revelar a equipe real e nao
 devem ser tocadas. O conteudo serializado de `tb_dado_transp` nao e
-parseado: se o INE tambem estiver dentro do blob, ele sobrevive - mesma
-classe de lacuna do texto livre, tratada na fase 2.
+parseado aqui: o blob inteiro e apagado pela `07_anon_documentos.py`.
 """
 
 from __future__ import annotations

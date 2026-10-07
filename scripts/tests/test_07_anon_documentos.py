@@ -129,3 +129,20 @@ def test_atomicidade_rollback_em_falha(pg_engine, monkeypatch):
 
     _, arquivo = _rows(pg_engine)
     assert arquivo[0].no_arquivo == "receita.pdf"
+
+
+def test_blobs_de_transmissao_com_dado_de_paciente_sao_excluidos(pg_engine):
+    with pg_engine.begin() as c:
+        c.execute(text("CREATE TABLE public.tb_envio_rnds "
+                       "(co_seq serial PRIMARY KEY, bl_json_envio bytea)"))
+        c.execute(text("INSERT INTO public.tb_envio_rnds (bl_json_envio) "
+                       "VALUES (convert_to('{\"cns\":\"700000000000000\"}', 'UTF8'))"))
+        c.execute(text("CREATE TABLE public.tb_dado_transp "
+                       "(co_seq serial PRIMARY KEY, im_dado_serializado bytea NOT NULL)"))
+        c.execute(text("INSERT INTO public.tb_dado_transp (im_dado_serializado) VALUES ('\\x0b000100'::bytea)"))
+    m.run(pg_engine)
+    with pg_engine.connect() as c:
+        rnds = c.execute(text("SELECT bl_json_envio FROM public.tb_envio_rnds")).scalar()
+        transp = c.execute(text("SELECT octet_length(im_dado_serializado) FROM public.tb_dado_transp")).scalar()
+    assert rnds is None
+    assert transp == 0  # NOT NULL: fica vazio
