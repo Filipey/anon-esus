@@ -66,9 +66,6 @@ def pct(ax, eixo="x") -> None:
     (ax.xaxis if eixo == "x" else ax.yaxis).set_major_formatter(f)
 
 
-def subtitulo(ax, texto: str) -> None:
-    ax.text(0, 1.02, texto, transform=ax.transAxes, fontsize=8.5, color=TEXTO_2, va="bottom")
-
 
 def legenda(ax, **kw) -> None:
     """Chave da legenda com linha sólida e marcador sem a borda branca (a borda,
@@ -108,9 +105,7 @@ def fig_escada(d00: dict) -> None:
     ax.set_xlim(0, 112)
     pct(ax)
     ax.set_xlabel("cidadãos únicos (classe de tamanho 1)")
-    ax.set_title("Quem é reidentificável na base sem tratamento", pad=18)
-    subtitulo(ax, "Cada linha soma um quase-identificador ao anterior. Em destaque: o que um vizinho "
-                  "sabe (sexo, nascimento, equipe, território, raça/cor).")
+    ax.set_title("Quem é reidentificável na base sem tratamento", pad=10)
     salvar(fig, "01_escada_quase_identificadores")
 
 
@@ -125,9 +120,7 @@ def fig_tira_um(d00: dict) -> None:
     ax.set_xlim(0, 112)
     pct(ax)
     ax.set_xlabel("cidadãos únicos com os demais quase-identificadores")
-    ax.set_title("O nascimento é o quase-identificador que mais pesa", pad=18)
-    subtitulo(ax, "Tirar o mês/ano de nascimento derruba os únicos de 99% para 51%; "
-                  "qualquer outro muda menos de 2 pontos.")
+    ax.set_title("O nascimento é o quase-identificador que mais pesa", pad=10)
     salvar(fig, "02_sem_cada_quase_identificador")
 
 
@@ -145,9 +138,7 @@ def fig_generalizacao(d00: dict) -> None:
     pct(ax, "y")
     ax.set_ylabel("cidadãos")
     legenda(ax, loc="upper right")
-    ax.set_title("Engrossar só a data não basta", pad=18)
-    subtitulo(ax, "Sobre sexo + equipe + tercil + raça/cor: mesmo com 5 faixas de ciclo de vida, "
-                  "20% ficam em classe menor que 20.")
+    ax.set_title("Engrossar só a data não basta", pad=10)
     salvar(fig, "03_generalizacao_nascimento")
 
 
@@ -172,9 +163,7 @@ def fig_supressao(d02: dict) -> None:
     ax.set_xlabel("k")
     ax.set_ylabel("dos preenchidos, suprimidos")
     legenda(ax, loc="lower right", ncols=2)
-    ax.set_title("Custo do k em atributos suprimidos", pad=18)
-    subtitulo(ax, "Núcleo com corte por ciclo de vida. Com k = 5: escolaridade 16%, raça/cor 8%, "
-                  "tercil 34%; estado civil (5% preenchido) quase some.")
+    ax.set_title("Custo do k em atributos suprimidos", pad=10)
     salvar(fig, "04_supressao_por_k")
 
 
@@ -193,8 +182,7 @@ def fig_deslocamento(d02: dict) -> None:
     ax.set_ylabel("deslocamento mediano (meses)")
     legenda(ax, loc="upper left", bbox_to_anchor=(1.01, 1.0), title="idade", title_fontsize=8.5,
             alignment="left")
-    ax.set_title("Custo do k na data de nascimento", pad=18)
-    subtitulo(ax, "Com k = 5: ~2 meses em bebês, ~6 em adultos; idosos, mais esparsos, deslocam mais.")
+    ax.set_title("Custo do k na data de nascimento", pad=10)
     salvar(fig, "05_deslocamento_nascimento_por_k")
 
 
@@ -215,9 +203,7 @@ def fig_variantes(d02: dict) -> None:
     ax.set_xlabel("tercil de distância suprimido (dos que têm)")
     ax.set_ylabel("deslocamento mediano, < 2 anos (meses)")
     legenda(ax, loc="upper right")
-    ax.set_title("A fronteira entre as duas variantes do núcleo", pad=18)
-    subtitulo(ax, "Sem o corte por ciclo, o território sobrevive mas a idade dos bebês desloca anos; "
-                  "com o corte, o inverso.")
+    ax.set_title("A fronteira entre as duas variantes do núcleo", pad=10)
     salvar(fig, "06_variantes_do_nucleo")
 
 
@@ -234,9 +220,7 @@ def fig_diagnosticos(d02: dict) -> None:
     pct(ax, "y")
     ax.set_xlabel("k")
     legenda(ax, loc="center right", bbox_to_anchor=(1.0, 0.3))
-    ax.set_title("Doenças raras: muitos códigos, poucas ocorrências", pad=18)
-    subtitulo(ax, "Com k = 5, só 3% dos pares pessoa-diagnóstico mudam, mas 1 em cada 4 pessoas "
-                  "tem pelo menos um código raro.")
+    ax.set_title("Doenças raras: muitos códigos, poucas ocorrências", pad=10)
     salvar(fig, "07_diagnosticos_por_k")
 
 
@@ -269,9 +253,7 @@ def fig_epsilon(d03: dict) -> None:
     ax.set_ylabel("distância de variação total")
     legenda(ax, loc="upper left", bbox_to_anchor=(1.01, 1.0), fontsize=8, title="marginal",
             title_fontsize=8.5, alignment="left")
-    ax.set_title("Erro do kit DP em função de ε", pad=18)
-    subtitulo(ax, "A partir de ε ≈ 5 o modelo para de melhorar nas combinações não medidas: "
-                  "o limite passa a ser o modelo, não o ruído.")
+    ax.set_title("Erro do kit DP em função de ε", pad=10)
     salvar(fig, "08_kit_dp_erro_por_epsilon")
 
 
@@ -293,10 +275,114 @@ def fig_ruido_raras(d03: dict) -> None:
     ax.minorticks_off()
     ax.set_xlabel("ε (δ = 10⁻⁶)")
     ax.set_ylabel("desvio-padrão do ruído (pessoas)")
-    ax.set_title("Ruído na contagem de pessoas por código de diagnóstico", pad=18)
-    subtitulo(ax, "Enquanto o ruído for maior que a faixa, um código raro é indistinguível de "
-                  "zero: é a proteção funcionando.")
+    ax.set_title("Ruído na contagem de pessoas por código de diagnóstico", pad=10)
     salvar(fig, "09_kit_dp_ruido_doencas_raras")
+
+
+# ------------------------------------------------------------ metodologia
+def fig_metodologia() -> None:
+    """Fluxo do Trilho A: pipeline, experimentos que definem os parâmetros e
+    kit DP, da base original às populações sintéticas. Não depende de dados."""
+    from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle
+
+    fig, ax = plt.subplots(figsize=(15.5, 7.6))
+    ax.set_xlim(0, 130)
+    ax.set_ylim(0, 64)
+    ax.axis("off")
+    fundo = "#f3f2ee"
+
+    def caixa(x, y, w, h, titulo, corpo="", tag="", cor=None, preenchida=False):
+        ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0,rounding_size=1.2",
+                                    fc=fundo if preenchida else "white", ec=GRADE, lw=1, zorder=2))
+        if cor:
+            ax.add_patch(Rectangle((x, y + 0.6), 0.7, h - 1.2, fc=cor, ec="none", zorder=3))
+        ax.text(x + w / 2, y + h - 2.0, titulo, ha="center", va="top", fontsize=8.6, weight="bold",
+                color=TEXTO, zorder=4, linespacing=1.15)
+        if corpo:
+            ax.text(x + w / 2, y + h - 2.0 - 2.6 * (titulo.count("\n") + 1), corpo, ha="center", va="top",
+                    fontsize=7.3, color=TEXTO_2, zorder=4, linespacing=1.25)
+        if tag:
+            ax.text(x + w / 2, y + 1.3, tag, ha="center", va="bottom", fontsize=7, color=TEXTO_2,
+                    style="italic", zorder=4)
+
+    def seta(x1, y1, x2, y2, tracejada=False, rotulo="", rx=0.0, ry=0.0):
+        ax.add_patch(FancyArrowPatch((x1, y1), (x2, y2), arrowstyle="-|>", mutation_scale=9,
+                                     lw=1.1, color=TEXTO_2 if tracejada else "#8d8c86",
+                                     linestyle=(0, (3, 2)) if tracejada else "-", zorder=1,
+                                     shrinkA=0, shrinkB=0))
+        if rotulo:
+            ax.text((x1 + x2) / 2 + rx, (y1 + y2) / 2 + ry, rotulo, fontsize=7.6, color=TEXTO,
+                    ha="center", va="center", zorder=5,
+                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none"))
+
+    def faixa(y, texto, cor):
+        ax.add_patch(Rectangle((15, y), 1.2, 1.2, fc=cor, ec="none"))
+        ax.text(17, y + 0.6, texto, fontsize=8.6, color=TEXTO, va="center", weight="bold")
+
+    azul, laranja = SERIES[0], SERIES[1]
+    # entrada e saída
+    caixa(1, 4, 11, 54, "Base\noriginal", "e-SUS APS/PEC,\n12,4 mil\npessoas\n\napagada no fim\ndo prazo de\nretenção", preenchida=True)
+    caixa(117, 4, 12, 54, "Populações\nsintéticas", "estrutura da base\nanonimizada +\nresolução fina\ndo kit DP", preenchida=True)
+
+    # faixa A: pipeline
+    faixa(59.8, "Pipeline de migrations: a base que fica", azul)
+    ya, ha = 41, 17
+    etapas = [
+        ("Identificadores\ndiretos", "nomes, CPF, CNS, INE,\ne-mail, documentos,\nblobs, logs", "01–05, 07, 09–13"),
+        ("Endereço e\nterritório", "endereço suprimido;\nequipe + tercil de\ndistância (k ≥ 20)", "06, 14"),
+        ("Núcleo de quase-\nidentificadores", "sexo, nascimento,\nequipe, tercil, raça,\nescolaridade,\nestado civil", "15"),
+        ("Antropometria", "corte de extremos +\nmicroagregação\npor valor", "08"),
+        ("Doenças raras", "CID → categoria →\nsupressão; CIAP raro\nsuprimido", "16"),
+    ]
+    xs = [15, 32, 49, 66, 83]
+    for x, (t, c, tag) in zip(xs, etapas):
+        caixa(x, ya, 15, ha, t, c, tag, cor=azul)
+    for x0, x1 in zip(xs[:-1], xs[1:]):
+        seta(x0 + 15, ya + ha / 2, x1, ya + ha / 2)
+    caixa(100, ya, 13, ha, "Base\nanonimizada", "versões v00–v16\n(dump por etapa)", preenchida=True)
+    seta(98, ya + ha / 2, 100, ya + ha / 2)
+    seta(113, ya + ha / 2, 117, ya + ha / 2)
+
+    # faixa B: experimentos
+    faixa(36.3, "Experimentos na base original", "#8d8c86")
+    yb, hb = 21, 13.5
+    experimentos = [
+        ("Medição dos quase-\nidentificadores", "81% únicos pelo\nque um vizinho sabe", "00"),
+        ("Referência\nde utilidade", "estatísticas para\ncomparar as versões", "01"),
+        ("Varredura de k", "k = 2 … 30;\nfronteira risco ×\nsupressão × data", "02"),
+        ("Varredura de ε", "ε = 0,1 … 20;\nerro das marginais\ne do modelo", "03"),
+    ]
+    xb = [15, 32, 49, 66]
+    for x, (t, c, tag) in zip(xb, experimentos):
+        caixa(x, yb, 15, hb, t, c, tag)
+    for x0, x1 in zip(xb[:-1], xb[1:]):
+        seta(x0 + 15, yb + hb / 2, x1, yb + hb / 2)
+
+    # parâmetros: k sobe para 15, 08 e 16; ε desce para o kit
+    seta(56.5, yb + hb, 56.5, ya, tracejada=True, rotulo="k = 5", ry=1.2)
+    seta(58, yb + hb, 72, ya, tracejada=True)
+    seta(59.5, yb + hb, 89, ya, tracejada=True)
+
+    # faixa C: kit DP
+    faixa(16.3, "Kit de differential privacy (guardado à parte)", laranja)
+    yc, hc = 4, 12
+    caixa(15, yc, 32, hc, "Marginais da base original",
+          "pessoas (sexo, idade, equipe, tercil, raça,\nescolaridade, estado civil), diagnósticos\npor código e capítulo, peso, altura, IMC",
+          cor=laranja)
+    caixa(51, yc, 30, hc, "Ruído gaussiano discreto",
+          "OpenDP; orçamento em zCDP convertido\npara (ε, δ = 10⁻⁶); contribuição\nlimitada por pessoa", cor=laranja)
+    seta(47, yc + hc / 2, 51, yc + hc / 2)
+    caixa(100, yc, 13, hc, "Kit DP", "um único kit\ncom o ε escolhido", preenchida=True)
+    seta(81, yc + hc / 2, 100, yc + hc / 2)
+    seta(113, yc + hc / 2, 117, yc + hc / 2)
+    seta(73.5, yb, 70, yc + hc, tracejada=True, rotulo="ε", rx=1.6)
+
+    # base original alimenta as três faixas
+    for y in (ya + ha / 2, yb + hb / 2, yc + hc / 2):
+        seta(12, y, 15, y)
+
+    ax.set_title("Metodologia do Trilho A: k-anonimato evoluído + kit DP", loc="left", pad=6)
+    salvar(fig, "00_metodologia_trilho_a")
 
 
 def main() -> None:
@@ -305,6 +391,7 @@ def main() -> None:
     d00 = ler("00_quase_identificadores")
     d02 = ler("02_varredura_k")
     d03 = ler("03_varredura_epsilon")
+    fig_metodologia()
     fig_escada(d00)
     fig_tira_um(d00)
     fig_generalizacao(d00)
