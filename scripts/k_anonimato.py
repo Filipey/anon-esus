@@ -63,6 +63,50 @@ SUPRIMIVEIS = [
 ]
 
 
+def _absorver(df: pd.DataFrame, alvo: pd.Series, doadores: pd.Series, faltam: int,
+              colunas: list[str], marca: str) -> None:
+    """Suprime `colunas` de `faltam` pessoas de `doadores` (as de menor id,
+    para ser determinístico), juntando-as ao grupo `alvo`."""
+    escolhidos = df[doadores].sort_values("id").index[:faltam]
+    for col in colunas:
+        df.loc[escolhidos, col] = NULO
+    df.loc[escolhidos, marca] = True
+
+
+def _base_sexo_equipe(df: pd.DataFrame, k: int) -> None:
+    """Garante >= k pessoas em cada sexo x equipe publicado.
+
+    - equipe com < k pessoas no sexo: a equipe vinculada não é publicada;
+    - o grupo "sexo sem equipe" com 0 < n < k absorve pessoas do maior time do
+      mesmo sexo (que perdem a equipe);
+    - o grupo "sem sexo" com 0 < n < k absorve pessoas do maior sexo (que
+      perdem o sexo e a equipe); pessoas sem sexo também não publicam equipe.
+    Absorver tira informação de poucas pessoas, mas não inventa nenhuma.
+    """
+    tam = df.groupby(["sexo_pub", "equipe_pub"])["id"].transform("size")
+    pequena = (tam < k) & (df["equipe_pub"] != NULO)
+    df.loc[pequena, "equipe_suprimida"] = True
+    df.loc[pequena, "equipe_pub"] = NULO
+
+    sem_sexo = df["sexo_pub"] == NULO
+    df.loc[sem_sexo & (df["equipe_pub"] != NULO), "equipe_suprimida"] = True
+    df.loc[sem_sexo, "equipe_pub"] = NULO
+    n = int(sem_sexo.sum())
+    if 0 < n < k:
+        maior = df.loc[~sem_sexo, "sexo_pub"].value_counts().idxmax()
+        _absorver(df, sem_sexo, df["sexo_pub"] == maior, k - n, ["sexo_pub", "equipe_pub"], "sexo_suprimido")
+
+    for sexo in df.loc[df["sexo_pub"] != NULO, "sexo_pub"].unique():
+        do_sexo = df["sexo_pub"] == sexo
+        vazio = do_sexo & (df["equipe_pub"] == NULO)
+        n = int(vazio.sum())
+        if 0 < n < k:
+            times = df.loc[do_sexo & ~vazio, "equipe_pub"].value_counts()
+            if not times.empty:
+                maior = do_sexo & (df["equipe_pub"] == times.index[0])
+                _absorver(df, vazio, maior, k - n, ["equipe_pub"], "equipe_suprimida")
+
+
 def nucleo_adaptativo(pes: pd.DataFrame, k: int, m: float = 1.0, por_ciclo: bool = True,
                       representante: str = "mediana",
                       suprimiveis: list[tuple[str, str]] | None = None) -> pd.DataFrame:
@@ -71,7 +115,9 @@ def nucleo_adaptativo(pes: pd.DataFrame, k: int, m: float = 1.0, por_ciclo: bool
     QI = sexo, data de nascimento, equipe + `suprimiveis` (padrão: estado
     civil, escolaridade em 5 níveis, raça/cor, tercil de distância).
 
-    0. Equipe com < k pessoas no sexo: equipe vinculada não é publicada.
+    0. Sexo x equipe com >= k pessoas (`_base_sexo_equipe`): equipe pequena
+       não é publicada; grupos "sem equipe" e "sem sexo" pequenos absorvem
+       pessoas do maior grupo vizinho.
     1. Base: sexo x equipe (x ciclo de vida, se `por_ciclo`); ciclos vizinhos
        se juntam até cada base ter >= k pessoas.
     2. Grupo (base, atributos publicados) com < m*k pessoas: suprime o
@@ -93,9 +139,9 @@ def nucleo_adaptativo(pes: pd.DataFrame, k: int, m: float = 1.0, por_ciclo: bool
         df[f"{col}_pub"] = _rotulo(df[col])
         pubs.append(f"{col}_pub")
 
-    tam_eq = df.groupby(["sexo_pub", "equipe_pub"])["id"].transform("size")
-    df["equipe_suprimida"] = (tam_eq < k) & (df["equipe_pub"] != NULO)
-    df.loc[df["equipe_suprimida"], "equipe_pub"] = NULO
+    df["equipe_suprimida"] = False
+    df["sexo_suprimido"] = False
+    _base_sexo_equipe(df, k)
 
     df["base_ciclo"] = "*"
     if por_ciclo:
