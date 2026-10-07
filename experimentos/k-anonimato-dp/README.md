@@ -125,6 +125,24 @@ Dois trilhos em paralelo; o B depende de anotação manual.
 | 12–13 | Validação: risco na versão final; relatórios do PEC na original e na final; conferência do kit DP. |
 | 14 | Folga. Destruição de sal/semente junto com a original. |
 
+## Decisões tomadas (07/10/2026)
+
+| Decisão | Valor | Base |
+|---|---|---|
+| Modelo de ameaça | O atacante conhece sexo, nascimento, equipe, tercil de distância, raça/cor, **escolaridade** (5 níveis) e **estado civil**. Município de nascimento/residência e ocupação ficam fora do k (valor raro → nulo). | `02_varredura_k.py`: qualquer atributo publicado fora do cálculo do k desfaz a garantia (com k = 10, só a escolaridade põe 96% em classe < k). |
+| Variante do núcleo | Corte por ciclo de vida, m = 1 | Datas de criança 3x mais precisas que sem o corte, ao custo de mais tercil suprimido. |
+| **k** | **5** | Cotovelo da curva: com k = 5 mantém escolaridade (84%) e raça/cor (92%) e 66% do tercil; deslocamento mediano da data ~2 meses em bebês e ~6 em adultos. Risco máximo 0,2 por classe — limite usual para base de acesso controlado. |
+| Diagnósticos | k global por código (não por sexo x ciclo) | Por sexo x ciclo generaliza ~90% dos pares pessoa-código; global, 3% com k = 5. |
+| Antropometria | Corte de extremos (0,1% / 99,9%) + microagregação por valor, k pessoas distintas por bloco | Distorção desprezível (Wasserstein ~0,1% do desvio padrão). |
+| População do k | `tb_cidadao` (11.604) + pessoas só no CDS (832 cadastros atuais sem cidadão correspondente) | Todas estão na base publicada. Versões antigas do cadastro CDS ligam-se à pessoa pela cadeia `co_unico_ficha_origem`. |
+
+Achados de dado que entram no desenho das migrations:
+
+- a 04 só altera linhas com CPF: ~11% dos cidadãos (sem CPF) saem com a data de nascimento original em todas as tabelas — a migration do núcleo cobre todas as linhas;
+- a 04 deriva o deslocamento de `md5(CPF fictício)`, sem sal: quem tem a base anonimizada recalcula o deslocamento. A data de nascimento passa a ser a do k-anonimato; o deslocamento das demais datas (até 30 dias) fica, sem efeito sobre a proteção;
+- ~2% das pessoas já têm, na original, data de nascimento posterior à primeira medição;
+- a antropometria tem erros de digitação (peso de 500 kg, IMC de 2.721), absorvidos pelo corte de extremos.
+
 ## Pontos de desenho em aberto
 
 1. **Datas de atendimento.** Mudar o nascimento e manter os atendimentos
