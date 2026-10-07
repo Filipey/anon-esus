@@ -6,15 +6,17 @@ migrations reaproveitarem depois. Nenhuma toca o banco.
 Núcleo de quase-identificadores (QI): sexo, data de nascimento, equipe,
 tercil de distância, raça/cor.
 
-1. `nucleo`: generaliza até todo grupo (sexo, equipe, tercil, raça/cor)
-   publicado ter >= k pessoas — primeiro suprime a raça/cor de quem está em
-   grupo pequeno, depois o tercil (que é do domicílio: suprime para a família
-   inteira). Equipe não entra na hierarquia: ela aparece em cada atendimento,
-   suprimi-la no vínculo não esconderia nada — e sexo x equipe já tem
-   centenas de pessoas. Depois, dentro de cada grupo, microagrega a data de
-   nascimento: ordena e corta em blocos consecutivos de >= k pessoas; todos
-   do bloco recebem a mesma data (a menor do bloco, para ninguém "nascer"
-   depois do próprio atendimento, ou a mediana).
+1. `nucleo_adaptativo`: QI = sexo, nascimento, equipe + atributos
+   suprimíveis (estado civil, escolaridade em 5 níveis, raça/cor, tercil).
+   Corte por ciclo de vida, supressão em ordem de prioridade nos grupos com
+   < m*k pessoas (tercil é do domicílio: suprime para a família), grupo
+   residual absorvendo subgrupos até k, e microagregação da data de
+   nascimento em blocos de >= k dentro de cada grupo final. Equipe não é
+   generalizada (aparece em cada atendimento), só suprimida quando o
+   sexo x equipe inteiro tem < k pessoas. As duas primeiras versões
+   (estratos primeiro; data primeiro) eram os extremos da fronteira e foram
+   substituídas por esta, que tem os dois como casos limite (m = 1 sem
+   ciclo; m grande).
 2. `raros_para_outro`: valor de QI fora do núcleo com < k pessoas vira nulo.
 3. `antropometria`: por variável, corta extremos (erros de digitação) e
    microagrega por valor — blocos consecutivos de valores com >= k pessoas
@@ -37,170 +39,64 @@ def _rotulo(serie: pd.Series) -> pd.Series:
     return serie.astype(object).where(serie.notna(), NULO).astype(str)
 
 
-def nucleo(pes: pd.DataFrame, k: int, representante: str = "min") -> pd.DataFrame:
-    """Devolve, por pessoa, os QI publicados e o nível de generalização.
-
-    Colunas de entrada: id, sexo, dt_nasc, equipe, tercil, raca_cor, domicilio.
-    """
-    df = pes[["id", "sexo", "dt_nasc", "equipe", "tercil", "raca_cor", "domicilio"]].copy()
-    df["raca_pub"] = _rotulo(df["raca_cor"])
-    df["tercil_pub"] = _rotulo(df["tercil"])
-    df["equipe_pub"] = _rotulo(df["equipe"])
-    df["sexo_pub"] = _rotulo(df["sexo"])
-    chave = ["sexo_pub", "equipe_pub", "tercil_pub", "raca_pub"]
-
-    df["raca_suprimida"] = False
-    df["tercil_suprimido"] = False
-    for _ in range(50):
-        tam = df.groupby(chave)["id"].transform("size")
-        pequeno = tam < k
-        if not pequeno.any():
-            break
-        # 1º passo: suprime raça/cor de quem ainda a tem publicada
-        alvo = pequeno & (df["raca_pub"] != NULO)
-        if alvo.any():
-            df.loc[alvo, "raca_pub"] = NULO
-            df.loc[alvo, "raca_suprimida"] = True
-            continue
-        # 2º passo: suprime o tercil do domicílio inteiro
-        alvo = pequeno & (df["tercil_pub"] != NULO)
-        if alvo.any():
-            doms = set(df.loc[alvo & df["domicilio"].notna(), "domicilio"])
-            fam = df["domicilio"].isin(doms) | alvo
-            df.loc[fam & (df["tercil_pub"] != NULO), "tercil_suprimido"] = True
-            df.loc[fam, "tercil_pub"] = NULO
-            continue
-        break  # sobra só sexo x equipe < k: tratado na microagregação (bloco único)
-
-    df["dt_nasc_pub"] = pd.NaT
-    df["bloco"] = -1
-    proximo = 0
-    for _, g in df.sort_values("dt_nasc").groupby(chave, sort=False):
-        idx = g.index.to_numpy()
-        n = len(idx)
-        nblocos = max(1, n // k)
-        cortes = np.array_split(idx, nblocos)  # blocos consecutivos de >= k (ou o grupo todo)
-        for b in cortes:
-            datas = df.loc[b, "dt_nasc"]
-            rep = datas.min() if representante == "min" else datas.sort_values().iloc[len(b) // 2]
-            df.loc[b, "dt_nasc_pub"] = rep
-            df.loc[b, "bloco"] = proximo
-            proximo += 1
-    df["desloc_dias"] = (df["dt_nasc"] - df["dt_nasc_pub"]).dt.days
-    return df
-
-
-def nucleo_data_primeiro(pes: pd.DataFrame, k: int, representante: str = "mediana",
-                         fator_bloco: float = 1.0) -> pd.DataFrame:
-    """Variante que prioriza a precisão da data de nascimento.
-
-    1. Dentro de sexo x equipe (grupos de centenas), corta a data em blocos
-       consecutivos de >= k*fator_bloco pessoas e publica um representante
-       por bloco. Com grupos grandes há bebês suficientes para os blocos deles
-       serem estreitos.
-    2. Dentro de cada bloco, subgrupo (tercil, raça/cor) com < k pessoas tem a
-       raça suprimida; se ainda < k, o tercil (do domicílio inteiro).
-    3. O subgrupo (sem tercil, sem raça) do bloco, se ficar com 0 < n < k,
-       absorve subgrupos inteiros do mesmo bloco, do menor para o maior, até
-       chegar a k. Como o bloco tem >= k pessoas, sempre termina: o k vale
-       para todos, exceto um grupo sexo x equipe inteiro menor que k.
-    Supressão de tercil afeta a família em outros blocos; repete até estabilizar.
-    """
-    df = pes[["id", "sexo", "dt_nasc", "equipe", "tercil", "raca_cor", "domicilio"]].copy()
-    df["sexo_pub"] = _rotulo(df["sexo"])
-    df["equipe_pub"] = _rotulo(df["equipe"])
-    df["raca_pub"] = _rotulo(df["raca_cor"])
-    df["tercil_pub"] = _rotulo(df["tercil"])
-
-    tamanho = max(k, int(round(k * fator_bloco)))
-    df["bloco"] = -1
-    df["dt_nasc_pub"] = pd.NaT
-    proximo = 0
-    for _, g in df.sort_values("dt_nasc").groupby(["sexo_pub", "equipe_pub"], sort=False):
-        idx = g.index.to_numpy()
-        for b in np.array_split(idx, max(1, len(idx) // tamanho)):
-            datas = df.loc[b, "dt_nasc"].sort_values()
-            rep = datas.iloc[0] if representante == "min" else datas.iloc[len(b) // 2]
-            df.loc[b, "dt_nasc_pub"] = rep
-            df.loc[b, "bloco"] = proximo
-            proximo += 1
-
-    sub = ["bloco", "tercil_pub", "raca_pub"]
-    for _ in range(200):
-        mudou = False
-        tam = df.groupby(sub)["id"].transform("size")
-        alvo = (tam < k) & (df["raca_pub"] != NULO)
-        if alvo.any():
-            df.loc[alvo, "raca_pub"] = NULO
-            mudou = True
-            tam = df.groupby(sub)["id"].transform("size")
-        alvo = (tam < k) & (df["tercil_pub"] != NULO)
-        if alvo.any():
-            doms = set(df.loc[alvo & df["domicilio"].notna(), "domicilio"])
-            fam = alvo | df["domicilio"].isin(doms)
-            df.loc[fam, "tercil_pub"] = NULO
-            mudou = True
-            tam = df.groupby(sub)["id"].transform("size")
-        # subgrupo totalmente suprimido pequeno: absorve subgrupos do mesmo bloco
-        vazio = (df["tercil_pub"] == NULO) & (df["raca_pub"] == NULO)
-        tam_vazio = df[vazio].groupby("bloco").size()
-        for bloco, n in tam_vazio[tam_vazio < k].items():
-            no_bloco = df[(df["bloco"] == bloco) & ~vazio]
-            if no_bloco.empty:
-                continue
-            ordem = no_bloco.groupby(["tercil_pub", "raca_pub"]).size().sort_values()
-            for (t, r), m in ordem.items():
-                sel = (df["bloco"] == bloco) & (df["tercil_pub"] == t) & (df["raca_pub"] == r)
-                doms = set(df.loc[sel & df["domicilio"].notna(), "domicilio"])
-                df.loc[sel, "raca_pub"] = NULO
-                df.loc[sel | df["domicilio"].isin(doms), "tercil_pub"] = NULO
-                n += m
-                mudou = True
-                if n >= k:
-                    break
-        if not mudou:
-            break
-
-    df["raca_suprimida"] = (df["raca_pub"] == NULO) & df["raca_cor"].notna()
-    df["tercil_suprimido"] = (df["tercil_pub"] == NULO) & df["tercil"].notna()
-    df["desloc_dias"] = (df["dt_nasc"] - df["dt_nasc_pub"]).dt.days
-    return df
-
-
 CICLOS = ["0-1", "2-9", "10-19", "20-59", "60+"]
 
+# Escolaridade (tb_escolaridade) em 5 níveis; o publicado é um código
+# representativo de cada nível, porque o PEC exige um código válido.
+NIVEL_ESCOLARIDADE = {
+    15: "nenhuma", 14: "nenhuma",
+    1: "infantil", 2: "infantil", 3: "infantil",
+    4: "fundamental", 5: "fundamental", 6: "fundamental", 7: "fundamental", 8: "fundamental", 9: "fundamental",
+    10: "medio", 11: "medio", 12: "medio",
+    13: "superior",
+}
+CODIGO_DO_NIVEL = {"nenhuma": 15, "infantil": 1, "fundamental": 5, "medio": 10, "superior": 13}
 
-def nucleo_adaptativo(pes: pd.DataFrame, k: int, m: float = 3.0, por_ciclo: bool = True,
-                      representante: str = "mediana") -> pd.DataFrame:
-    """Meio-termo ajustável entre precisão da data e retenção de raça/tercil.
+# Atributos generalizáveis, na ordem em que são suprimidos (o de menor valor
+# para a população sintética primeiro). "domicilio": suprimir afeta a família.
+SUPRIMIVEIS = [
+    ("estado_civil", "pessoa"),
+    ("escolaridade_nivel", "pessoa"),
+    ("raca_cor", "pessoa"),
+    ("tercil", "domicilio"),
+]
 
-    1. Base: sexo x equipe (x ciclo de vida, se `por_ciclo`) — bebês só
-       concorrem com bebês, então os blocos de data deles ficam estreitos.
-       Base com < k pessoas é fundida ao ciclo vizinho.
-    2. Raça/cor e tercil só ficam publicados num grupo (base, tercil, raça) com
-       >= m*k pessoas: abaixo disso, suprime a raça; depois o tercil (do
-       domicílio inteiro). m = 1 ~ "categorias primeiro"; m grande ~ "data
-       primeiro".
-    3. Grupo residual (base, sem tercil, sem raça) com 0 < n < k absorve
-       grupos inteiros da mesma base, do menor para o maior, até chegar a k.
+
+def nucleo_adaptativo(pes: pd.DataFrame, k: int, m: float = 1.0, por_ciclo: bool = True,
+                      representante: str = "mediana",
+                      suprimiveis: list[tuple[str, str]] | None = None) -> pd.DataFrame:
+    """Meio-termo ajustável entre precisão da data e retenção dos atributos.
+
+    QI = sexo, data de nascimento, equipe + `suprimiveis` (padrão: estado
+    civil, escolaridade em 5 níveis, raça/cor, tercil de distância).
+
+    0. Equipe com < k pessoas no sexo: equipe vinculada não é publicada.
+    1. Base: sexo x equipe (x ciclo de vida, se `por_ciclo`); ciclos vizinhos
+       se juntam até cada base ter >= k pessoas.
+    2. Grupo (base, atributos publicados) com < m*k pessoas: suprime o
+       primeiro atributo ainda publicado na ordem de `suprimiveis` (tercil é do
+       domicílio: suprime para a família inteira). Repete até estabilizar.
+    3. Grupo residual (base, tudo suprimido) com 0 < n < k absorve grupos
+       inteiros da mesma base, do menor para o maior, até chegar a k.
     4. Data microagregada dentro de cada grupo final em blocos de >= k.
-    Garante k para todos, exceto uma base inteira menor que k.
+    Garante k para todos sobre os QI publicados.
     """
-    df = pes[["id", "sexo", "dt_nasc", "equipe", "tercil", "raca_cor", "domicilio", "ciclo"]].copy()
+    sup = suprimiveis if suprimiveis is not None else SUPRIMIVEIS
+    df = pes.copy()
+    if "escolaridade_nivel" not in df and "escolaridade" in df:
+        df["escolaridade_nivel"] = df["escolaridade"].map(NIVEL_ESCOLARIDADE)
     df["sexo_pub"] = _rotulo(df["sexo"])
     df["equipe_pub"] = _rotulo(df["equipe"])
-    df["raca_pub"] = _rotulo(df["raca_cor"])
-    df["tercil_pub"] = _rotulo(df["tercil"])
-    df["base_ciclo"] = df["ciclo"].astype(str) if por_ciclo else "*"
-    base = ["sexo_pub", "equipe_pub", "base_ciclo"]
+    pubs = []
+    for col, _ in sup:
+        df[f"{col}_pub"] = _rotulo(df[col])
+        pubs.append(f"{col}_pub")
 
-    # 0. equipe com < k pessoas no sexo (ex.: INE com um cidadão vinculado):
-    #    a equipe vinculada não é publicada para essas pessoas.
     tam_eq = df.groupby(["sexo_pub", "equipe_pub"])["id"].transform("size")
     df["equipe_suprimida"] = (tam_eq < k) & (df["equipe_pub"] != NULO)
     df.loc[df["equipe_suprimida"], "equipe_pub"] = NULO
 
-    # 1. dentro de sexo x equipe, junta ciclos consecutivos até cada balde ter >= k
+    df["base_ciclo"] = "*"
     if por_ciclo:
         for _, g in df.groupby(["sexo_pub", "equipe_pub"]):
             cont = g["ciclo"].astype(str).value_counts()
@@ -221,35 +117,39 @@ def nucleo_adaptativo(pes: pd.DataFrame, k: int, m: float = 3.0, por_ciclo: bool
                 else:
                     baldes.append(atual)
             for b in baldes:
-                sel = g.index[g["ciclo"].astype(str).isin(b)]
-                df.loc[sel, "base_ciclo"] = "|".join(b)
+                df.loc[g.index[g["ciclo"].astype(str).isin(b)], "base_ciclo"] = "|".join(b)
+    base = ["sexo_pub", "equipe_pub", "base_ciclo"]
+    grupo = base + pubs
 
-    grupo = base + ["tercil_pub", "raca_pub"]
+    def suprimir(sel: pd.Series, col: str, nivel: str) -> None:
+        pub = f"{col}_pub"
+        if nivel == "domicilio":
+            doms = set(df.loc[sel & df["domicilio"].notna(), "domicilio"])
+            sel = sel | df["domicilio"].isin(doms)
+        df.loc[sel, pub] = NULO
+
     limite = m * k
-    for _ in range(100):
+    for _ in range(200):
         mudou = False
-        tam = df.groupby(grupo)["id"].transform("size")
-        alvo = (tam < limite) & (df["raca_pub"] != NULO)
-        if alvo.any():
-            df.loc[alvo, "raca_pub"] = NULO
-            mudou = True
+        for col, nivel in sup:
             tam = df.groupby(grupo)["id"].transform("size")
-        alvo = (tam < limite) & (df["tercil_pub"] != NULO)
-        if alvo.any():
-            doms = set(df.loc[alvo & df["domicilio"].notna(), "domicilio"])
-            df.loc[alvo | df["domicilio"].isin(doms), "tercil_pub"] = NULO
-            mudou = True
-        # 3. residual pequeno absorve grupos da mesma base
-        vazio = (df["tercil_pub"] == NULO) & (df["raca_pub"] == NULO)
+            alvo = (tam < limite) & (df[f"{col}_pub"] != NULO)
+            # só suprime este atributo de quem já não tem um anterior a suprimir
+            for anterior, _n in sup[: [c for c, _ in sup].index(col)]:
+                alvo &= df[f"{anterior}_pub"] == NULO
+            if alvo.any():
+                suprimir(alvo, col, nivel)
+                mudou = True
+        vazio = (df[pubs] == NULO).all(axis=1)
         tam_vazio = df[vazio].groupby(base).size()
         for chave, n in tam_vazio[tam_vazio < k].items():
             na_base = (df[base] == pd.Series(chave, index=base)).all(axis=1)
             outros = df[na_base & ~vazio]
-            for (t, r), qtd in outros.groupby(["tercil_pub", "raca_pub"]).size().sort_values().items():
-                sel = na_base & (df["tercil_pub"] == t) & (df["raca_pub"] == r)
-                doms = set(df.loc[sel & df["domicilio"].notna(), "domicilio"])
-                df.loc[sel, "raca_pub"] = NULO
-                df.loc[sel | df["domicilio"].isin(doms), "tercil_pub"] = NULO
+            for vals, qtd in outros.groupby(pubs).size().sort_values().items():
+                vals = vals if isinstance(vals, tuple) else (vals,)
+                sel = na_base & (df[pubs] == pd.Series(vals, index=pubs)).all(axis=1)
+                for col, nivel in sup:
+                    suprimir(sel, col, nivel)
                 n += qtd
                 mudou = True
                 if n >= k:
@@ -268,9 +168,12 @@ def nucleo_adaptativo(pes: pd.DataFrame, k: int, m: float = 3.0, por_ciclo: bool
             df.loc[b, "bloco"] = proximo
             proximo += 1
 
-    df["raca_suprimida"] = (df["raca_pub"] == NULO) & df["raca_cor"].notna()
-    df["tercil_suprimido"] = (df["tercil_pub"] == NULO) & df["tercil"].notna()
+    for col, _ in sup:
+        df[f"{col}_suprimido"] = (df[f"{col}_pub"] == NULO) & df[col].notna()
+    df["raca_suprimida"] = df.get("raca_cor_suprimido", False)
+    df["tercil_suprimido"] = df.get("tercil_suprimido", False)
     df["desloc_dias"] = (df["dt_nasc"] - df["dt_nasc_pub"]).dt.days
+    df["raca_pub"] = df.get("raca_cor_pub", NULO)
     return df
 
 

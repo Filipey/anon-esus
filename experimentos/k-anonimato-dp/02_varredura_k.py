@@ -35,28 +35,35 @@ import _populacao as P
 from _conexao import conectar, gravar, titulo
 
 KS = (2, 3, 5, 10, 15, 20, 30)
+# Variante escolhida: corte por ciclo de vida. m=2 e "sem ciclo" ficam como
+# referência da fronteira.
 VARIANTES_NUCLEO = {
     "ciclo, m=1": dict(m=1, por_ciclo=True),
-    "ciclo, m=3": dict(m=3, por_ciclo=True),
+    "ciclo, m=2": dict(m=2, por_ciclo=True),
     "sem ciclo, m=1": dict(m=1, por_ciclo=False),
 }
 FAIXAS = {"<2": (0, 1), "2-9": (2, 9), "10-19": (10, 19), "20-59": (20, 59), "60+": (60, 200)}
-FORA_NUCLEO = ["mun_nasc", "mun_resid", "ocupacao", "escolaridade", "estado_civil",
-               "nacionalidade", "orient_sexual", "ident_genero"]
+# Modelo de ameaça (decisão de 07/10/2026): o atacante conhece sexo,
+# nascimento, equipe, tercil, raça/cor, escolaridade e estado civil.
+# Os demais QI ficam fora do k, com valor raro recodificado.
+FORA_NUCLEO = ["mun_nasc", "mun_resid", "ocupacao", "nacionalidade", "orient_sexual", "ident_genero"]
 RECODIFICAR = ["mun_nasc", "mun_resid", "ocupacao"]
-NUCLEO_PUB = ["sexo_pub", "equipe_pub", "tercil_pub", "raca_pub", "dt_nasc_pub"]
+SUPRIMIVEIS = [c for c, _ in K.SUPRIMIVEIS]
+NUCLEO_PUB = ["sexo_pub", "equipe_pub", *[f"{c}_pub" for c in SUPRIMIVEIS], "dt_nasc_pub"]
 VARS_ANTRO = ["peso", "altura", "imc", "perimetro_cefalico", "altura_uterina"]
 
 
 def medir_nucleo(pes: pd.DataFrame, r: pd.DataFrame, k: int, primeira_medicao: pd.Series) -> dict:
     cl = K.classes(r, NUCLEO_PUB)
     a = r["desloc_dias"].abs()
-    tem_tercil = pes["tercil"].notna()
     out = {
         "k_min": int(cl.min()),
         "pct_equipe_suprimida": round(100 * float(r["equipe_suprimida"].mean()), 2),
-        "pct_raca_suprimida": round(100 * float(r["raca_suprimida"].sum() / pes["raca_cor"].notna().sum()), 2),
-        "pct_tercil_suprimido": round(100 * float(r["tercil_suprimido"].sum() / max(1, tem_tercil.sum())), 2),
+        # % dos que tinham o atributo preenchido e o perderam
+        "pct_suprimido": {
+            c: round(100 * float(r[f"{c}_suprimido"].sum() / max(1, r[c].notna().sum())), 2)
+            for c in SUPRIMIVEIS
+        },
         "desloc": {},
     }
     for rot, (lo, hi) in FAIXAS.items():
@@ -179,8 +186,10 @@ def main() -> None:
         print(f"\n  k = {k}  ({time.time() - t:.0f}s)")
         for nome, n in linha["nucleo"].items():
             d = n["desloc"]
-            print(f"    núcleo [{nome:14}] raça sup {n['pct_raca_suprimida']:5.1f}%  tercil sup "
-                  f"{n['pct_tercil_suprimido']:5.1f}%  desloc. <2a {d['<2']['mediana']:4.0f}d  "
+            sp = n["pct_suprimido"]
+            print(f"    núcleo [{nome:14}] sup: est.civil {sp['estado_civil']:5.1f}% escol "
+                  f"{sp['escolaridade_nivel']:5.1f}% raça {sp['raca_cor']:5.1f}% tercil "
+                  f"{sp['tercil']:5.1f}%  desloc. <2a {d['<2']['mediana']:4.0f}d  "
                   f"20-59 {d['20-59']['mediana']:4.0f}d  60+ {d['60+']['mediana']:4.0f}d  "
                   f"residual únicos {n['risco_residual']['pct_unicos']:5.2f}%")
         a = linha["antropometria"]
