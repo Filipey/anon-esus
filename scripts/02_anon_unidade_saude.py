@@ -25,6 +25,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
+import segredo
 from pipeline_logging import get_logger
 from sqlalchemy import Engine, text
 from sqlalchemy.engine import Connection
@@ -98,7 +99,8 @@ CNES_COLUMNS: list[NameColumn] = [
     NameColumn("public", "tl_prof_grupo_ativ_col", "nu_cnes"),
 ]
 
-CNES_SALT = "anon-esus-unidade-cnes-v1"
+# Sal derivado do segredo (scripts/segredo.py), nunca fixo no código.
+PROPOSITO_SAL = "cnes"
 
 
 def _column_exists(conn: Connection, col: NameColumn) -> bool:
@@ -130,7 +132,7 @@ def _collect_raw_values(conn: Connection, col: NameColumn) -> set[str]:
 
 
 def _fake_cnes(value: str) -> str:
-    digest = hashlib.md5(f"{value}{CNES_SALT}".encode()).hexdigest()
+    digest = hashlib.md5(f"{value}{segredo.sal(PROPOSITO_SAL)}".encode()).hexdigest()
     number = int(digest[:8], 16) % 10_000_000
     return f"{number:07d}"
 

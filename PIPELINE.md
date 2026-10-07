@@ -106,6 +106,15 @@ DB_PASSWORD=...
 DB_NAME=esus
 ```
 
+**Segredo da anonimização.** As migrations que trocam valor real por fictício
+de forma determinística (hash com sal, Faker com semente, sorteio de CPF)
+derivam sal e semente de `ANON_SEGREDO` no `.env` (`scripts/segredo.py`).
+Com sal fixo no código, quem conhecesse um CNS, INE ou CNES real recalcularia
+o fictício e acharia o registro. Gere com
+`python -c "import secrets; print(secrets.token_hex(32))"`; **destrua o
+segredo junto com a base original no fim do prazo de retenção**, para o
+mapeamento real → fictício não poder mais ser recalculado.
+
 Instale as dependências:
 
 ```bash

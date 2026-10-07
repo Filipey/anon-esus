@@ -34,6 +34,7 @@ import unicodedata
 from dataclasses import dataclass
 
 from faker import Faker
+import segredo
 from pipeline_logging import get_logger
 from sqlalchemy import Engine, text
 from sqlalchemy.engine import Connection
@@ -126,7 +127,7 @@ FILTER_COLUMNS: list[FilterColumn] = [
 ]
 
 FAKER_LOCALE = "pt_BR"
-FAKER_SEED = 20260803
+SEMENTE = "nome-cidadao"  # semente derivada do segredo (scripts/segredo.py)
 
 _ESPACOS = re.compile(r"\s+")
 
@@ -179,7 +180,7 @@ def _collect_raw_values(conn: Connection, col: NameColumn) -> set[str]:
 
 def _fake_name(index: int) -> str:
     fake = Faker(FAKER_LOCALE)
-    fake.seed_instance(FAKER_SEED + index)
+    fake.seed_instance(segredo.semente(SEMENTE) + index)
     return fake.name()
 
 

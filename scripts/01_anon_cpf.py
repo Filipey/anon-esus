@@ -7,7 +7,8 @@ Características:
   falha faz rollback e o banco permanece no estado original.
 - **Determinística**: o mesmo CPF original é sempre mapeado para o mesmo
   CPF falso em todas as colunas, preservando vínculos entre tabelas — e,
-  com a semente `CPF_SEED`, para o mesmo CPF falso em toda execução.
+  com a semente secreta (`segredo.semente(SEMENTE)`), para o mesmo CPF falso
+  em toda execução enquanto o segredo existir.
 - **Preserva o formato**: se o valor armazenado tinha pontuação
   (`000.000.000-00`) ou zeros à esquerda, o CPF falso é gravado no mesmo
   formato.
@@ -34,6 +35,7 @@ import random
 import re
 from dataclasses import dataclass
 
+import segredo
 from cpf_generator import CPF
 from pipeline_logging import get_logger
 from sqlalchemy import Engine, text
@@ -41,9 +43,9 @@ from sqlalchemy.engine import Connection
 
 log = get_logger("01_anon_cpf")
 
-# Semente do sorteio dos CPFs falsos: a mesma base sempre gera os mesmos
-# CPFs, então uma versão refeita pela pipeline sai idêntica à anterior.
-CPF_SEED = 20260930
+# Semente do sorteio dos CPFs falsos, derivada do segredo (scripts/segredo.py):
+# a mesma base sempre gera os mesmos CPFs enquanto o segredo existir.
+SEMENTE = "cpf"
 
 
 @dataclass(frozen=True)
@@ -198,12 +200,12 @@ def _build_fake_map(raw_values: set[str]) -> dict[str, str]:
     """norma (11 dígitos) -> CPF falso (11 dígitos), 1:1 e único.
 
     Reprodutível entre execuções: `CPF.generate()` sorteia pelo `random`
-    global, então o estado é semeado com `CPF_SEED` (e restaurado depois),
+    global, então o estado é semeado com a semente secreta (e restaurado depois),
     e os valores são percorridos em ordem — iterar o `set` direto dependeria
     do hash aleatório de string do Python, que muda a cada processo.
     """
     estado = random.getstate()
-    random.seed(CPF_SEED)
+    random.seed(segredo.semente(SEMENTE))
     try:
         norm_to_fake: dict[str, str] = {}
         used_fakes: set[str] = set()

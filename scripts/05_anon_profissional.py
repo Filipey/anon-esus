@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from faker import Faker
+import segredo
 from pipeline_logging import get_logger
 from sqlalchemy import Engine, text
 from sqlalchemy.engine import Connection
@@ -79,7 +80,7 @@ REGISTRATION_COLUMNS: list[ColumnTarget] = [
 ]
 
 FAKER_LOCALE = "pt_BR"
-FAKER_SEED = 20260714
+SEMENTE = "nome-profissional"  # semente derivada do segredo (scripts/segredo.py)
 FAKE_LAST_NAME = "Teste"
 GENERIC_REGISTRATION = "99999"
 
@@ -114,7 +115,7 @@ def _collect_raw_values(conn: Connection, col: ColumnTarget) -> set[str]:
 
 def _fake_name(index: int) -> str:
     fake = Faker(FAKER_LOCALE)
-    fake.seed_instance(FAKER_SEED + index)
+    fake.seed_instance(segredo.semente(SEMENTE) + index)
     if index % 2 == 0:
         first_name = fake.first_name_female()
     else:

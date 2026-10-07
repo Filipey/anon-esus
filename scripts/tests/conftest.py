@@ -9,9 +9,15 @@ FROM`, casts `::text`, triggers etc.), o que SQLite/H2 não ofereceriam.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 import testing.postgresql
 from sqlalchemy import Engine, create_engine
+
+# Segredo fixo de teste (scripts/segredo.py): os testes não podem depender do
+# segredo real do .env, e o load_dotenv não sobrescreve variável já definida.
+os.environ["ANON_SEGREDO"] = "segredo-de-teste-" + "0" * 32
 
 
 @pytest.fixture

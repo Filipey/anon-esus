@@ -49,6 +49,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 
+import segredo
 from pipeline_logging import get_logger
 from sqlalchemy import Engine, text
 from sqlalchemy.engine import Connection
@@ -107,7 +108,8 @@ INE_COLUMNS: list[IneColumn] = [
     IneColumn("public", "tl_prof_grupo_ativ_col", "nu_ine"),
 ]
 
-INE_SALT = "anon-esus-equipe-ine-v1"
+# Sal derivado do segredo (scripts/segredo.py), nunca fixo no código.
+PROPOSITO_SAL = "ine"
 
 _NON_DIGITS = re.compile(r"\D")
 
@@ -148,7 +150,7 @@ def _fake_ine(value: str) -> str:
     quebraria a consistencia do mapa entre tabelas.
     """
     digits = len(_NON_DIGITS.sub("", value)) or 10
-    digest = hashlib.md5(f"{value}{INE_SALT}".encode()).hexdigest()
+    digest = hashlib.md5(f"{value}{segredo.sal(PROPOSITO_SAL)}".encode()).hexdigest()
     number = int(digest[:12], 16) % (10**digits)
     return f"{number:0{digits}d}"
 

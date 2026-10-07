@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import segredo
 from pipeline_logging import get_logger
 from sqlalchemy import Engine, text
 from sqlalchemy.engine import Connection
@@ -132,11 +133,10 @@ CNS_COLUMNS: list[CnsColumn] = [
     CnsColumn("public", "tl_prof_grupo_ativ_col", "nu_cns"),
 ]
 
-# Sal fixo do projeto - nao e segredo, so evita expor md5(valor) cru. Mesma
-# ressalva de 08_anon_antropometrico.py: nao e protecao real contra forca
-# bruta se o espaco de valores for pequeno (nao e o caso do CNS, que tem
-# 15 digitos).
-ANON_SALT = "anon-esus-cns-v1"
+# Sal derivado do segredo (scripts/segredo.py) e passado ao SQL como
+# parametro (:sal), para nao aparecer no texto da consulta nem em log de erro.
+# Com sal fixo no codigo, quem conhece o CNS real recalcularia o hash.
+PROPOSITO_SAL = "cns"
 
 NUMERIC_TYPES = {"numeric", "double precision", "real", "integer", "bigint", "smallint"}
 TEXT_TYPES = {"character varying", "character", "text"}
@@ -160,7 +160,7 @@ def _column_info(conn: Connection, col: CnsColumn) -> tuple[str, int | None] | N
 
 
 def _hash_expr(column_ref: str, data_type: str, max_length: int | None) -> str | None:
-    salted = f"({column_ref}::text || '{ANON_SALT}')"
+    salted = f"({column_ref}::text || :sal)"
     if data_type in TEXT_TYPES:
         # CNS tem 15 digitos - o hash mira esse tamanho, mas nunca deve
         # estourar o limite real da coluna (character(N)/varchar(N)).
@@ -198,7 +198,8 @@ def run(engine: Engine) -> None:
                     f'SET "{col.column}" = {expr} '
                     f'WHERE t."{col.column}" IS NOT NULL '
                     f"  AND btrim(t.\"{col.column}\"::text) <> ''"
-                )
+                ),
+                {"sal": segredo.sal(PROPOSITO_SAL)},
             )
             log.info("%s: %d valor(es) substituido(s) por hash", col.qualified, result.rowcount)
             total += result.rowcount or 0

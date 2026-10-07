@@ -35,6 +35,7 @@ import re
 from dataclasses import dataclass
 
 from faker import Faker
+import segredo
 from pipeline_logging import get_logger
 from sqlalchemy import Engine, text
 from sqlalchemy.engine import Connection
@@ -228,9 +229,11 @@ MIXED_ID_COLUMNS: list[Column] = [
     Column("public", "tl_familia", "nu_cpf_cns_responsavel"),
 ]
 
-ANON_SALT = "anon-esus-identificadores-v1"
+# Sal e semente derivados do segredo (scripts/segredo.py); o sal vai ao SQL
+# como parametro (:sal), fora do texto da consulta.
+PROPOSITO_SAL = "identificadores"
+SEMENTE = "telefone"
 FAKER_LOCALE = "pt_BR"
-FAKER_SEED = 20260803
 
 TEXT_TYPES = {"character varying", "character", "text"}
 
@@ -268,7 +271,7 @@ def _hash_columns(conn: Connection, columns: list[Column], desired_length: int) 
             log.warning("tipo de dado nao tratado (%s), pulando: %s", data_type, col.qualified)
             continue
         length = desired_length if max_length is None else min(desired_length, max_length)
-        expr = f"substr(md5(t.\"{col.column}\"::text || '{ANON_SALT}'), 1, {length})"
+        expr = f"substr(md5(t.\"{col.column}\"::text || :sal), 1, {length})"
 
         result = conn.execute(
             text(
@@ -276,7 +279,8 @@ def _hash_columns(conn: Connection, columns: list[Column], desired_length: int) 
                 f'SET "{col.column}" = {expr} '
                 f'WHERE t."{col.column}" IS NOT NULL '
                 f"  AND btrim(t.\"{col.column}\"::text) <> ''"
-            )
+            ),
+            {"sal": segredo.sal(PROPOSITO_SAL)},
         )
         log.info("%s: %d valor(es) substituido(s) por hash", col.qualified, result.rowcount)
         total += result.rowcount or 0
@@ -300,7 +304,7 @@ def _fake_phone(index: int, digits: int) -> str:
     - o mapa continua unico por valor, como em `05`/`09`.
     """
     fake = Faker(FAKER_LOCALE)
-    fake.seed_instance(FAKER_SEED + index)
+    fake.seed_instance(segredo.semente(SEMENTE) + index)
     return fake.numerify("#" * digits)
 
 
@@ -394,7 +398,7 @@ def _anon_mixed_ids(conn: Connection) -> int:
             continue
 
         digits = f"regexp_replace(t.\"{col.column}\"::text, '\\D', '', 'g')"
-        salted = f"(t.\"{col.column}\"::text || '{ANON_SALT}')"
+        salted = f"(t.\"{col.column}\"::text || :sal)"
         expr = (
             "CASE "
             f"WHEN length({digits}) = 11 THEN substr(md5({salted}), 1, 11) "
@@ -408,7 +412,8 @@ def _anon_mixed_ids(conn: Connection) -> int:
                 f'SET "{col.column}" = {expr} '
                 f'WHERE t."{col.column}" IS NOT NULL '
                 f"  AND btrim(t.\"{col.column}\"::text) <> ''"
-            )
+            ),
+            {"sal": segredo.sal(PROPOSITO_SAL)},
         )
         log.info("%s: %d valor(es) substituido(s)", col.qualified, result.rowcount)
         total += result.rowcount or 0
