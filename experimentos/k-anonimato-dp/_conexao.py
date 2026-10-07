@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover - depende do ambiente
     sys.exit("psycopg2 não encontrado. Rode: pip install psycopg2-binary")
 
 AQUI = Path(__file__).resolve().parent
-RAIZ = AQUI.parents[2]
+RAIZ = AQUI.parents[1]
 RESULTADOS = AQUI / "resultados"
 
 
