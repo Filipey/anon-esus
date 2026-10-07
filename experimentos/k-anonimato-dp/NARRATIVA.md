@@ -266,6 +266,41 @@ CIAP, que tem sintomas comuns, o que provavelmente infla sua prevalência
 (2.280 pessoas, ~20% da população) — a definição da lista de condições
 sensíveis deve ser revista antes de citar esse número.
 
+## 9b. Mudança das distribuições (experimento 05)
+
+Além de quanto é suprimido, importa quanto a forma das distribuições muda,
+porque é a forma que a geração sintética vai aprender. O experimento 05
+compara, para k ∈ {2, 3, 5, 10, 15, 20, 30}, a distribuição original e a
+publicada de cada variável tratada, com a divergência de Kullback-Leibler
+KL(original ‖ tratada) — quanta informação se perde ao usar a tratada no
+lugar da original — e com Jensen-Shannon, que é simétrica e vai de 0 a 1.
+As duas são calculadas em faixas fixas, iguais para as duas distribuições,
+com suavização aditiva de 0,5 por célula: sem ela a KL é infinita sempre
+que a tratada zera uma faixa que a original tem, e a microagregação e a
+supressão fazem exatamente isso. A suavização afeta a magnitude absoluta da
+KL; as comparações entre variáveis e entre valores de k, feitas com a mesma
+suavização, são o que importa.
+
+Com k = 5, a antropometria praticamente não muda (KL ≈ 0,001 para peso e
+IMC, 0,002 para altura). A idade em anos muda pouco (KL = 0,038; JS =
+0,012), assim como escolaridade (0,050), estado civil (0,077), raça/cor
+(0,090) e a distribuição sobre os códigos de diagnóstico (0,055). O que
+muda bastante é a idade em meses abaixo de 5 anos (KL = 0,616; JS = 0,167):
+os blocos de data dos bebês têm cerca de 2 meses, a distribuição mês a mês
+fica cheia de dentes, e 12,5% das crianças com menos de 60 meses na
+original passam de 60 meses na tratada. Nas categóricas, a mudança é quase
+toda a migração para "não informado" (raça/cor: 0% → 8%; escolaridade: 17%
+→ 30%). Com k crescente, a KL sobe em todas as variáveis; a idade em meses
+chega a 1,0 com k = 10 e a 2,1 com k = 30, e a escolaridade a 1,1 com k = 30.
+
+Uma leitura possível é que, com k = 5, a base guardada preserva a forma das
+distribuições usadas na geração sintética, com a exceção da idade fina das
+crianças pequenas — exatamente a resolução que o kit DP guarda (idade em
+anos por sexo) e que o modelo sintético teria de recuperar de lá. Se a
+idade em meses for necessária (calendário vacinal, puericultura), isso
+pesa a favor de um k menor ou de um tratamento específico para menores de 2
+anos.
+
 ## 10. Etapa 8 — as migrations e o que os dados revelaram
 
 O núcleo virou a migration 15, que roda depois da 06 (usa o tercil gravado
@@ -395,6 +430,8 @@ gravado: guardar kits com ε diferentes somaria os custos de privacidade.
   endereço em `tb_acomp_cidadaos_vinculados`, 2% de nascimento após medição):
   consultas da sessão; registrados em `README.md` (Decisões tomadas).
 - Varredura de ε: `resultados/03_varredura_epsilon_*.json`; figuras `08`, `09`.
+- Mudança das distribuições (KL e JS por variável e por k):
+  `resultados/05_distribuicoes_*.json`; figuras `12` a `15`.
 - Decisões (k = 5, modelo de ameaça, variante, ε recomendado) e prazo:
   `README.md`, seção "Decisões tomadas".
 - Metodologia em diagrama: figura `00_metodologia_trilho_a`.

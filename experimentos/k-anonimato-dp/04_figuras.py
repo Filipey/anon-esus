@@ -61,8 +61,8 @@ def salvar(fig, nome: str) -> None:
     print(f"  {nome}")
 
 
-def pct(ax, eixo="x") -> None:
-    f = FuncFormatter(lambda v, _: f"{v:.0f}%")
+def pct(ax, eixo="x", casas=0) -> None:
+    f = FuncFormatter(lambda v, _: f"{v:.{casas}f}%")
     (ax.xaxis if eixo == "x" else ax.yaxis).set_major_formatter(f)
 
 
@@ -72,7 +72,9 @@ def legenda(ax, **kw) -> None:
     útil no gráfico, cortava a linha da chave e ela parecia tracejada)."""
     from matplotlib.lines import Line2D
     linhas, rotulos = ax.get_legend_handles_labels()
-    chaves = [Line2D([], [], color=h.get_color(), lw=2, marker="o", ms=5, mew=0) for h in linhas]
+    chaves = [Line2D([], [], color=h.get_color(), lw=2, marker="o", ms=5, mew=0) if hasattr(h, "get_color")
+              else Line2D([], [], color=h.get_edgecolor(), lw=2)  # histograma em degraus: só a linha
+              for h in linhas]
     ax.legend(chaves, rotulos, **kw)
 
 
@@ -286,6 +288,133 @@ def fig_ldiv_por_k(d02: dict) -> None:
     salvar(fig, "11_l_diversidade_por_k")
 
 
+# ------------------------------------------------------------ 05
+def _kl_k5(d05: dict, var: str) -> str:
+    r = next(x for x in d05["por_k"] if x["k"] == d05["k_figura"])["divergencias"][var]
+    return f"KL = {r['kl']:.3f}  ·  JS = {r['js']:.3f}"
+
+
+def _degraus(ax, eixo, original, tratada, passo, densidade=True) -> None:
+    import numpy as np
+    for i, (vals, nome) in enumerate(((original, "original"), (tratada, "tratada (k = 5)"))):
+        v = np.array(vals, dtype=float)
+        if densidade:
+            v = v / v.sum() * 100
+        x = np.append(eixo, eixo[-1] + passo)
+        ax.stairs(v, x, color=SERIES[i], lw=1.6 if i else 1.4, label=nome, zorder=3 - i)
+
+
+def _canto(ax, texto: str) -> None:
+    """Divergências numa linha logo abaixo do título do painel (o título usa pad=16)."""
+    ax.text(0.0, 1.02, texto, transform=ax.transAxes, ha="left", va="bottom", fontsize=7.4, color=TEXTO_2)
+
+
+def fig_dist_idade(d05: dict) -> None:
+    d = d05["distribuicoes_k5"]
+    fig, axes = plt.subplots(1, 2, figsize=(7.8, 3.2))
+    for ax, chave, titulo, rotx in ((axes[0], "idade", "Idade em anos", "idade (anos)"),
+                                    (axes[1], "idade_meses_menores_5", "Menores de 5 anos, em meses",
+                                     "idade (meses)")):
+        eixo, orig, trat = d[chave]["eixo"], d[chave]["original"], d[chave]["tratada"]
+        # porcentagem sobre o total de pessoas, inclusive a última faixa de meses
+        # (">= 60"), que fica fora do gráfico mas entra na conta
+        orig = [100 * v / sum(orig) for v in orig]
+        trat = [100 * v / sum(trat) for v in trat]
+        extra = ""
+        if chave == "idade_meses_menores_5":
+            extra = f"  ·  {trat[-1]:.1f}% passam de 60 meses"
+            eixo, orig, trat = eixo[:-1], orig[:-1], trat[:-1]
+        _degraus(ax, eixo, orig, trat, 1, densidade=False)
+        ax.set_title(titulo, fontsize=9.5, pad=16, loc="left")
+        ax.set_xlabel(rotx)
+        pct(ax, "y", casas=1)
+        _canto(ax, _kl_k5(d05, chave) + extra)
+    axes[0].set_ylabel("das pessoas")
+    legenda(axes[0], loc="upper right")
+    fig.suptitle("Distribuição da idade: original × tratada (k = 5)", x=0.01, ha="left", fontsize=10.5,
+                 weight="bold", color=TEXTO, y=1.03)
+    fig.tight_layout()
+    salvar(fig, "12_distribuicao_idade")
+
+
+def fig_dist_categoricas(d05: dict) -> None:
+    import numpy as np
+    d = d05["distribuicoes_k5"]
+    nomes_raca = {"1": "branca", "2": "preta", "3": "amarela", "4": "parda", "5": "indígena",
+                  "6": "sem informação"}
+    paineis = [("raca_cor", "Raça/cor"), ("escolaridade", "Escolaridade"), ("estado_civil", "Estado civil")]
+    fig, axes = plt.subplots(1, 3, figsize=(10, 3.4))
+    for ax, (chave, titulo) in zip(axes, paineis):
+        eixo = [nomes_raca.get(c, c) if chave == "raca_cor" else c for c in d[chave]["eixo"]]
+        if chave == "estado_civil":
+            eixo = [{"1": "solteiro", "2": "casado", "3": "viúvo", "4": "separado",
+                     "5": "união consensual"}.get(c, c) for c in eixo]
+        y = np.arange(len(eixo))
+        for i, (serie, nome) in enumerate(((d[chave]["original"], "original"),
+                                           (d[chave]["tratada"], "tratada (k = 5)"))):
+            v = np.array(serie, dtype=float) / sum(serie) * 100
+            ax.barh(y + (i - 0.5) * 0.38, v, height=0.36, color=SERIES[i], label=nome, zorder=2)
+        ax.set_yticks(y, eixo, fontsize=8)
+        ax.invert_yaxis()
+        ax.grid(axis="y", visible=False)
+        ax.tick_params(axis="y", length=0)
+        ax.set_title(titulo, fontsize=9.5, pad=16)
+        pct(ax)
+        _canto(ax, _kl_k5(d05, chave))
+    axes[0].set_xlabel("das pessoas")
+    axes[0].legend(loc="lower right", bbox_to_anchor=(1.0, 0.1), fontsize=7.6)
+    fig.suptitle("Atributos suprimidos: original × tratada (k = 5)", x=0.01, ha="left", fontsize=10.5,
+                 weight="bold", color=TEXTO, y=1.03)
+    fig.tight_layout()
+    salvar(fig, "13_distribuicao_categoricas")
+
+
+def fig_dist_antropometria(d05: dict) -> None:
+    d = d05["distribuicoes_k5"]
+    fig, axes = plt.subplots(1, 3, figsize=(10, 3.2))
+    for ax, (chave, titulo, passo, rotx) in zip(axes, (("peso", "Peso", 1.0, "kg"),
+                                                       ("altura", "Altura", 1.0, "cm"),
+                                                       ("imc", "IMC", 0.5, "kg/m²"))):
+        _degraus(ax, d[chave]["eixo"], d[chave]["original"], d[chave]["tratada"], passo)
+        ax.set_title(titulo, fontsize=9.5, pad=16)
+        ax.set_xlabel(rotx)
+        pct(ax, "y", casas=1)
+        _canto(ax, _kl_k5(d05, chave))
+    axes[0].set_ylabel("das medições")
+    legenda(axes[0], loc="upper left", bbox_to_anchor=(0, 0.88), fontsize=7.6)
+    fig.suptitle("Antropometria: original × tratada (k = 5)", x=0.01, ha="left", fontsize=10.5,
+                 weight="bold", color=TEXTO, y=1.03)
+    fig.tight_layout()
+    salvar(fig, "14_distribuicao_antropometria")
+
+
+def fig_kl_por_k(d05: dict) -> None:
+    ks = [x["k"] for x in d05["por_k"]]
+    grupos = [
+        ("Núcleo de quase-identificadores", [("idade", "idade (anos)"), ("idade_meses_menores_5", "idade < 5 anos (meses)"),
+                                              ("raca_cor", "raça/cor"), ("escolaridade", "escolaridade"),
+                                              ("estado_civil", "estado civil")]),
+        ("Antropometria e diagnósticos", [("peso", "peso"), ("altura", "altura"), ("imc", "IMC"),
+                                          ("diagnosticos", "diagnósticos (código)")]),
+    ]
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.6), sharey=True)
+    for ax, (titulo, vars_) in zip(axes, grupos):
+        for i, (chave, nome) in enumerate(vars_):
+            ys = [x["divergencias"][chave]["kl"] for x in d05["por_k"]]
+            ax.plot(ks, ys, color=SERIES[i], marker="o", ms=5, mec="white", mew=1.2, label=nome, zorder=3)
+        linha_k(ax, rotulo="k = 5")
+        ax.set_yscale("log")
+        ax.set_xticks([k for k in ks if k >= 5])
+        ax.set_xlabel("k")
+        ax.set_title(titulo, fontsize=9.5, pad=8)
+        legenda(ax, loc="lower right", fontsize=7.6)
+    axes[0].set_ylabel("KL(original ‖ tratada), nats")
+    fig.suptitle("Perda de informação na forma das distribuições, em função de k", x=0.01, ha="left",
+                 fontsize=10.5, weight="bold", color=TEXTO, y=1.03)
+    fig.tight_layout()
+    salvar(fig, "15_kl_por_k")
+
+
 # ------------------------------------------------------------ 03
 def fig_epsilon(d03: dict) -> None:
     res = d03["resultados"]
@@ -453,6 +582,7 @@ def main() -> None:
     d00 = ler("00_quase_identificadores")
     d02 = ler("02_varredura_k")
     d03 = ler("03_varredura_epsilon")
+    d05 = ler("05_distribuicoes")
     fig_metodologia()
     fig_escada(d00)
     fig_tira_um(d00)
@@ -463,6 +593,10 @@ def main() -> None:
     fig_diagnosticos(d02)
     fig_ldiv_k5(d02)
     fig_ldiv_por_k(d02)
+    fig_dist_idade(d05)
+    fig_dist_categoricas(d05)
+    fig_dist_antropometria(d05)
+    fig_kl_por_k(d05)
     fig_epsilon(d03)
     fig_ruido_raras(d03)
 

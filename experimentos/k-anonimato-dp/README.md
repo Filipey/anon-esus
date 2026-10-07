@@ -209,6 +209,7 @@ cd experimentos/k-anonimato-dp
 ../../venv/bin/python 01_referencia.py              # estatísticas de referência (--banco para outra versão)
 ../../venv/bin/python 02_varredura_k.py             # varredura de k (--rapido: k em 5, 10, 20)
 ../../venv/bin/python 03_kit_dp.py                  # varredura de ε; --gravar --epsilon X grava UM kit
+../../venv/bin/python 05_distribuicoes.py           # KL/JS original x tratada por variável e por k
 ../../venv/bin/python 04_figuras.py                 # figuras/ a partir dos JSON mais recentes
 ```
 
