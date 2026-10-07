@@ -42,6 +42,28 @@ NAME_COLUMNS: list[ColumnTarget] = [
     ColumnTarget("public", "tb_prof", "no_profissional_filtro"),
     ColumnTarget("public", "tb_prof", "no_social_profissional"),
     ColumnTarget("public", "tl_prof", "no_profissional_filtro"),
+    # Nome de profissional, responsável técnico ou operador fora de tb_prof,
+    # achado no inventário de colunas textuais da fase 2 (set/2026). Recebem
+    # o mesmo tratamento: nome fictício com sobrenome "Teste".
+    ColumnTarget("public", "tb_historico_dados_fai", "no_nome_finalizador_obs"),
+    ColumnTarget("public", "tb_historico_dados_fcc", "no_nome_executante"),
+    ColumnTarget("public", "tb_historico_dados_fcc", "no_nome_solicitante"),
+    ColumnTarget("public", "tb_prof_grupo_ativ_col", "no_prof_grupo"),
+    ColumnTarget("public", "tl_prof_grupo_ativ_col", "no_prof_grupo"),
+    # responsável técnico de instituição de permanência (ficha domiciliar)
+    ColumnTarget("public", "ta_cds_domicilio", "no_responsavel_tecnico"),
+    ColumnTarget("public", "tb_cds_domicilio", "no_responsavel_tecnico"),
+    ColumnTarget("public", "tl_cds_domicilio", "no_responsavel_tecnico"),
+    ColumnTarget("public", "tb_cds_cad_domiciliar", "no_responsavel_tecnico"),
+    ColumnTarget("public", "tl_cds_cad_domiciliar", "no_responsavel_tecnico"),
+    # quem enviou/instalou: lotes de transmissão e integrações
+    ColumnTarget("public", "tb_recebimento_lote", "no_responsavel_envio"),
+    ColumnTarget("public", "tb_recebimento_lote", "no_responsavel_envio_filtro"),
+    ColumnTarget("public", "tb_dado_recebido_info_instalac", "no_responsavel_envio"),
+    ColumnTarget("public", "ta_credencial_integracao", "no_responsavel"),
+    ColumnTarget("public", "tb_credencial_integracao", "no_responsavel"),
+    ColumnTarget("public", "ta_sistema_externo", "no_responsavel"),
+    ColumnTarget("public", "tb_sistema_externo", "no_responsavel"),
 ]
 
 REGISTRATION_COLUMNS: list[ColumnTarget] = [

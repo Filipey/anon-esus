@@ -160,3 +160,24 @@ def test_atomicidade_rollback_em_falha(pg_engine, monkeypatch):
     assert dim[0].no_profissional == PROF_A
     assert prof.no_civil_profissional == PROF_A
     assert prof.nu_conselho_classe == "ABC123"
+
+
+def test_nomes_de_responsavel_e_operador_fora_de_tb_prof(pg_engine):
+    """Colunas achadas no inventário da fase 2: mesmo nome real em tabelas
+    diferentes recebe o mesmo fictício, com sobrenome Teste."""
+    with pg_engine.begin() as c:
+        c.execute(text("CREATE TABLE public.tb_historico_dados_fcc "
+                       "(co_seq serial PRIMARY KEY, no_nome_executante text, no_nome_solicitante text)"))
+        c.execute(text("INSERT INTO public.tb_historico_dados_fcc (no_nome_executante, no_nome_solicitante) "
+                       "VALUES ('Carla Mendes', 'Paulo Lima')"))
+        c.execute(text("CREATE TABLE public.tb_recebimento_lote "
+                       "(co_seq serial PRIMARY KEY, no_responsavel_envio text)"))
+        c.execute(text("INSERT INTO public.tb_recebimento_lote (no_responsavel_envio) VALUES ('Carla Mendes')"))
+    m.run(pg_engine)
+    with pg_engine.connect() as c:
+        exe, sol = c.execute(text("SELECT no_nome_executante, no_nome_solicitante "
+                                  "FROM public.tb_historico_dados_fcc")).one()
+        envio = c.execute(text("SELECT no_responsavel_envio FROM public.tb_recebimento_lote")).scalar()
+    assert {exe, sol, envio}.isdisjoint({"Carla Mendes", "Paulo Lima"})
+    assert exe.endswith(" Teste") and sol.endswith(" Teste")
+    assert exe == envio
