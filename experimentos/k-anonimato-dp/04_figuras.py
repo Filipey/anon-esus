@@ -224,6 +224,68 @@ def fig_diagnosticos(d02: dict) -> None:
     salvar(fig, "07_diagnosticos_por_k")
 
 
+def _ldiv(d02: dict, k: int, variante="ciclo, m=1") -> dict:
+    r = next(x for x in d02["resultados"] if x["k"] == k)
+    return {c: v for c, v in r["nucleo"][variante]["l_diversidade"].items() if not c.startswith("_")}
+
+
+def fig_ldiv_k5(d02: dict) -> None:
+    ld = _ldiv(d02, 5)
+    itens = sorted(ld.items(), key=lambda kv: -kv[1]["pessoas_com_condicao"])
+    rot = [f"{c} (n = {v['pessoas_com_condicao']:,})".replace(",", ".") for c, v in itens]
+    series = [("pessoas_em_classe_homogenea", "em classe homogênea (atributo revelado)"),
+              ("pessoas_em_classe_com_maioria", "em classe com maioria (atributo provável)")]
+    fig, ax = plt.subplots(figsize=(7, 3.6))
+    altura = 0.36
+    for i, (chave, nome) in enumerate(series):
+        ys = [j + (i - 0.5) * altura for j in range(len(itens))]
+        vals = [100 * v[chave] / max(1, v["pessoas_com_condicao"]) for _, v in itens]
+        ax.barh(ys, vals, height=altura * 0.92, color=SERIES[i], label=nome, zorder=2)
+        for (_, v), y, val in zip(itens, ys, vals):
+            if v["pessoas_em_classe_com_maioria"] == 0:
+                continue  # rótulo único "sem exposição", abaixo
+            ax.text(val, y, f" {val:.1f}%", va="center", fontsize=7.5, color=TEXTO)
+    for j, (_, v) in enumerate(itens):
+        if v["pessoas_em_classe_com_maioria"] == 0:
+            ax.text(0.4, j, "sem exposição", va="center", fontsize=7.5, color=TEXTO_2)
+    ax.set_yticks(range(len(itens)), rot)
+    ax.invert_yaxis()
+    ax.grid(axis="y", visible=False)
+    ax.tick_params(axis="y", length=0)
+    ax.set_xlim(0, 60)
+    pct(ax)
+    ax.set_xlabel("das pessoas com a condição")
+    ax.legend(loc="lower right")  # barras: a chave é o quadrado da cor
+    ax.set_title("l-diversidade com k = 5: exposição por condição sensível", pad=10)
+    salvar(fig, "10_l_diversidade_k5")
+
+
+def fig_ldiv_por_k(d02: dict) -> None:
+    ks = [r["k"] for r in d02["resultados"]]
+    condicoes = ["gestação/aborto", "transtorno mental"]
+    fig, axes = plt.subplots(1, 2, figsize=(7.6, 3.2), sharey=True)
+    paineis = [("pessoas_em_classe_homogenea", "Em classe homogênea"),
+               ("pessoas_em_classe_com_maioria", "Em classe com maioria")]
+    for ax, (chave, titulo) in zip(axes, paineis):
+        for i, cond in enumerate(condicoes):
+            ys = []
+            for k in ks:
+                v = _ldiv(d02, k)[cond]
+                ys.append(100 * v[chave] / max(1, v["pessoas_com_condicao"]))
+            ax.plot(ks, ys, color=SERIES[i], marker="o", ms=5, mec="white", mew=1.2, label=cond, zorder=3)
+        linha_k(ax, rotulo="k = 5")
+        ax.set_xticks([k for k in ks if k >= 5])
+        ax.set_xlabel("k")
+        ax.set_title(titulo, fontsize=9.5, pad=8)
+        pct(ax, "y")
+    axes[0].set_ylim(0, 100)
+    axes[0].set_ylabel("das pessoas com a condição")
+    legenda(axes[1], loc="upper right")
+    fig.suptitle("l-diversidade em função de k", x=0.01, ha="left", fontsize=10.5, weight="bold",
+                 color=TEXTO, y=1.03)
+    salvar(fig, "11_l_diversidade_por_k")
+
+
 # ------------------------------------------------------------ 03
 def fig_epsilon(d03: dict) -> None:
     res = d03["resultados"]
@@ -399,6 +461,8 @@ def main() -> None:
     fig_deslocamento(d02)
     fig_variantes(d02)
     fig_diagnosticos(d02)
+    fig_ldiv_k5(d02)
+    fig_ldiv_por_k(d02)
     fig_epsilon(d03)
     fig_ruido_raras(d03)
 

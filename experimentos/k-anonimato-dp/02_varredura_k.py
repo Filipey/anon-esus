@@ -140,15 +140,18 @@ def medir_ldiv(r: pd.DataFrame, sens: pd.DataFrame) -> dict:
     cl = r[["id", *NUCLEO_PUB]].copy()
     cl["classe"] = cl[NUCLEO_PUB].astype(str).agg("|".join, axis=1)
     tam = cl.groupby("classe")["id"].size()
-    out = {}
+    out = {"_classes": int(len(tam))}
     for cat, g in sens.groupby("sensivel"):
         com = cl[cl["id"].isin(g["id"])].groupby("classe")["id"].size()
         homog = com[com == tam.reindex(com.index)]
         maioria = com[com >= 0.5 * tam.reindex(com.index)]
         out[cat] = {
+            # pessoas da população com a condição: base para as frações expostas
+            "pessoas_com_condicao": int(com.sum()),
             "classes_homogeneas": int(len(homog)),
             "pessoas_em_classe_homogenea": int(homog.sum()),
             "classes_com_maioria": int(len(maioria)),
+            "pessoas_em_classe_com_maioria": int(maioria.sum()),
         }
     return out
 

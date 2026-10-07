@@ -236,15 +236,35 @@ suprimidos; dos 596 CIAP, 354 ficam e 242 são suprimidos. Isso muda 21.296
 de 1.094.007 linhas com diagnóstico (~2%), mas atinge 25% das pessoas, que
 têm pelo menos um código raro.
 
-A l-diversidade (o ataque de homogeneidade: todos de uma classe com a mesma
-condição sensível) foi medida sobre as classes do núcleo para HIV/aids,
-tuberculose, hanseníase, IST, transtorno mental, uso de substância,
-gestação/aborto e violência. Com k = 10, apenas 2 classes (20 pessoas) eram
-homogêneas, ambas em gestação/aborto, e nenhuma nas demais condições. Lacuna:
-esse número é da primeira varredura (núcleo ainda sem escolaridade e estado
-civil) e de k = 10; para o modelo de ameaça e o k adotados (k = 5) a medida
-está no JSON da varredura final, mas não foi extraída para o texto — conferir
-antes de citar.
+A l-diversidade foi medida sobre as classes do núcleo publicado, para oito
+condições sensíveis (HIV/aids, tuberculose, hanseníase, IST, transtorno
+mental, uso de substância, gestação/aborto e violência). Mediram-se duas
+formas de exposição: a pessoa estar numa classe homogênea (todos da classe
+têm a condição: quem conhece a classe descobre o diagnóstico com certeza) e
+estar numa classe em que a condição é maioria (o diagnóstico fica provável).
+
+Com k = 5 e o modelo de ameaça adotado, as condições raras e mais
+estigmatizadas ficam sem exposição nenhuma: HIV/aids (6 pessoas), violência
+(6), tuberculose (5), uso de substância (23) e IST (45) não aparecem em
+classe homogênea nem em classe com maioria (hanseníase não ocorre na base).
+A exposição fica concentrada em duas condições comuns: gestação/aborto, com
+50 das 916 pessoas (5,5%) em classe homogênea e 48,8% em classe com maioria;
+e transtorno mental, com 5 das 2.280 (0,2%) e 34,2%. Com k = 2, essas frações
+eram de 41,4% e 24,8% em classe homogênea; a partir de k = 15 nenhuma pessoa
+fica em classe homogênea, mas a gestação continua majoritária em ~40% dos
+casos até k = 30.
+
+Uma leitura possível é que a gestação expõe mais porque se concentra num
+subgrupo que o próprio núcleo isola (mulheres em idade fértil, numa equipe):
+é a limitação conhecida da l-diversidade com atributos frequentes dentro de
+um subgrupo, que t-closeness trata. O resultado indica que o k = 5 basta para
+as condições raras, mas não impede inferência de gestação para cerca de 50
+pessoas; tratar isso (impor l-diversidade por fusão de classes, ou aceitar o
+risco por ser atributo pouco estigmatizado e inferível pelo próprio perfil)
+é uma decisão em aberto. Transtorno mental inclui o capítulo P inteiro da
+CIAP, que tem sintomas comuns, o que provavelmente infla sua prevalência
+(2.280 pessoas, ~20% da população) — a definição da lista de condições
+sensíveis deve ser revista antes de citar esse número.
 
 ## 10. Etapa 8 — as migrations e o que os dados revelaram
 
@@ -363,8 +383,10 @@ gravado: guardar kits com ε diferentes somaria os custos de privacidade.
   medição ad hoc da mesma sessão; não há JSON — reproduzir antes de citar.
 - Tabela de k e variante sem ciclo: `resultados/02_varredura_k_*.json`
   (execução completa mais recente); figuras `04`, `05`, `06`.
-- Diagnósticos (3,2% / 80% / 25%) e l-diversidade (k = 10, primeira varredura):
-  `02_varredura_k_*.json`; figura `07`.
+- Diagnósticos (3,2% / 80% / 25%): `02_varredura_k_*.json`; figura `07`.
+- l-diversidade (k = 5: gestação 5,5% / 48,8%; transtorno mental 0,2% / 34,2%;
+  demais 0): `02_varredura_k_20261007_122432.json` (varredura final com
+  `pessoas_com_condicao`); figuras `10` e `11`.
 - Antropometria (Wasserstein, correlação 0,844 → 0,852): `02_varredura_k_*.json`.
 - Contagens da migration 16 (2.752 / 596 códigos; 21.296 de 1.094.007 linhas)
   e da 15 (12.434 pessoas): execuções em modo leitura da sessão; reproduzíveis
