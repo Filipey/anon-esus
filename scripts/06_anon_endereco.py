@@ -207,6 +207,22 @@ ADDRESS_TABLES: list[AddressTable] = [
     ),
     AddressTable("public", "tl_cidadao", _PESSOA),
     AddressTable("public", "tl_prof", _PESSOA),
+    # cache de acompanhamento com cópia completa do endereço do cidadão,
+    # achado em 07/10/2026 (fora de todas as listas anteriores)
+    AddressTable(
+        "public",
+        "tb_acomp_cidadaos_vinculados",
+        (
+            "ds_logradouro_tb_cidadao",
+            "ds_logradouro_tb_cidadao_filtr",
+            "nu_numero_tb_cidadao",
+            "st_sem_numero_tb_cidadao",
+            "ds_complemento_tb_cidadao",
+            "no_bairro_tb_cidadao",
+            "no_bairro_tb_cidadao_filtro",
+            "ds_cep_tb_cidadao",
+        ),
+    ),
 ]
 
 # Endereço institucional, preservado de propósito (passo 4 do desenho).

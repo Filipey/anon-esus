@@ -101,6 +101,8 @@ MICRO_AREA_COLUMNS: list[Column] = [
     Column("public", "tl_cds_domicilio", "nu_micro_area"),
     Column("public", "tl_cds_visita_domiciliar", "nu_micro_area"),
     Column("public", "tl_cidadao", "nu_micro_area"),
+    # cópia do cidadão no cache de acompanhamento (achada em 07/10/2026)
+    Column("public", "tb_acomp_cidadaos_vinculados", "nu_micro_area_tb_cidadao"),
 ]
 
 # Usado quando a coluna e NOT NULL e de texto, e portanto nao aceita NULL.
