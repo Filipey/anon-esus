@@ -10,6 +10,11 @@ E o mesmo na categoria (3 caracteres), somando as subcategorias. Grava
 `resultados/06_cid_raros_<ts>.json` com a contagem de cada código (para a
 ECDF e a lista dos mais raros) e imprime os mais raros.
 
+Também lista as categorias fragmentadas: a mesma doença registrada com dois
+ou mais códigos, todos com menos de K pessoas (ex.: A161, A167 e A168 em
+A16). Grava `resultados/06_cid_fragmentadas_<ts>.csv`, com a soma na
+categoria e se ela alcança K (sobe para a categoria) ou não (suprimida).
+
 Atenção: a lista tem contagens de 1 e 2 pessoas por doença, o que é
 informação da base original. Fica em `resultados/` (fora do git) e deve ser
 apagada no prazo junto com a original.
@@ -24,6 +29,7 @@ import pandas as pd
 from _conexao import conectar, gravar, titulo
 
 TABELAS = ("tb_fat_atd_ind_problemas", "tb_fat_atend_odonto_problemas")
+K = 5
 
 
 def contagens(conn) -> pd.DataFrame:
@@ -55,6 +61,23 @@ def resumo(linhas: pd.DataFrame, chave: str, nome: dict) -> pd.DataFrame:
     return g.sort_values(["ocorrencias", "pessoas", "codigo"]).reset_index(drop=True)
 
 
+def fragmentadas(linhas: pd.DataFrame, por_codigo: pd.DataFrame, nome: dict) -> pd.DataFrame:
+    """Categorias com 2+ códigos distintos, todos com menos de K pessoas."""
+    g = por_codigo.groupby("categoria").agg(codigos=("codigo", "size"), max_pessoas=("pessoas", "max"))
+    sel = g[(g["codigos"] >= 2) & (g["max_pessoas"] < K)].index
+    cat = linhas[linhas["categoria"].isin(sel)].groupby("categoria").agg(
+        ocorrencias=("id", "size"), pessoas=("id", "nunique"))
+    detalhe = (por_codigo[por_codigo["categoria"].isin(sel)].sort_values("codigo")
+               .assign(txt=lambda d: d["codigo"] + " " + d["nome"] + " (" + d["ocorrencias"].astype(str)
+                       + "/" + d["pessoas"].astype(str) + ")")
+               .groupby("categoria")["txt"].agg(" | ".join))
+    out = g.loc[sel, ["codigos"]].join(cat).join(detalhe.rename("codigos_ocorrencias_pessoas"))
+    out["soma_pessoas_codigos"] = por_codigo[por_codigo["categoria"].isin(sel)].groupby("categoria")["pessoas"].sum()
+    out["destino_k5"] = (out["pessoas"] >= K).map({True: "sobe para a categoria", False: "suprimida"})
+    out.insert(0, "nome", out.index.map(nome).fillna(""))
+    return out.reset_index().sort_values(["codigos", "pessoas"], ascending=False)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--top", type=int, default=10)
@@ -77,6 +100,12 @@ def main() -> None:
                   f"com {n} pessoa(s): {(t['pessoas'] == n).sum():>5}")
         print(f"  {args.top} mais raros:")
         print(t.head(args.top).to_string(index=False))
+
+    frag = fragmentadas(linhas, por_codigo, nome)
+    print(f"\ncategorias fragmentadas (2+ códigos, todos com menos de {K} pessoas): {len(frag)}")
+    print(f"  sobem para a categoria: {(frag['pessoas'] >= K).sum()}   suprimidas: {(frag['pessoas'] < K).sum()}")
+    print(f"  mesma pessoa com 2+ códigos da categoria: {(frag['soma_pessoas_codigos'] > frag['pessoas']).sum()}")
+    gravar("06_cid_fragmentadas", frag.to_csv(index=False), sufixo="csv")
 
     gravar("06_cid_raros", {
         "tabelas": TABELAS,
