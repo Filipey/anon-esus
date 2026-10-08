@@ -355,7 +355,7 @@ def diagnosticos(diag: pd.DataFrame, contexto: pd.DataFrame | None, k: int) -> p
     cod["hier"] = [hierarquia(s, c) for s, c in zip(cod["sistema"], cod["codigo"])]
     cod["nivel"] = 0
     chave = ["sistema", "codigo"]
-    for _ in range(5):
+    for _ in range(20):
         cod["publicado"] = [h[n] for h, n in zip(cod["hier"], cod["nivel"])]
         d = d.drop(columns=["publicado", "nivel"], errors="ignore").merge(
             cod[[*chave, "publicado", "nivel"]], on=chave, how="left")
@@ -368,6 +368,14 @@ def diagnosticos(diag: pd.DataFrame, contexto: pd.DataFrame | None, k: int) -> p
         subir = (np.asarray(n_pub) < k) & (cod["nivel"] < cod["hier"].str.len() - 1)
         if not subir.any():
             break
+        # Um nível por vez, do mais específico para o mais geral: primeiro as
+        # subcategorias raras sobem para a categoria; só na rodada seguinte a
+        # categoria é avaliada, já com elas somadas. Subir tudo junto mandava
+        # para o capítulo um código de categoria raro (ex.: "S02" usado por 1
+        # pessoa) na mesma rodada em que as subcategorias S02x chegavam a ele,
+        # e a categoria acabava suprimida mesmo com 76 pessoas.
+        especificidade = cod["hier"].str.len() - 1 - cod["nivel"]
+        subir &= (especificidade == especificidade[subir].max()).to_numpy()
         cod.loc[subir, "nivel"] += 1
     return d.drop(columns=[c for c in ("ctx",) if c in d.columns])
 

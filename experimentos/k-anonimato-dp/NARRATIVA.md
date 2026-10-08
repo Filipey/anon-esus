@@ -223,7 +223,7 @@ regra adotada é que todo código publicado tenha pelo menos k = 5 pessoas
 distintas na base inteira. A alternativa de exigir k dentro de cada sexo ×
 ciclo de vida (atacante que sabe o diagnóstico e a faixa da pessoa) foi
 medida e descartada: com k = 5, generalizava 80% dos pares
-pessoa-diagnóstico, contra 3,2% na regra global.
+pessoa-diagnóstico, contra 3,0% na regra global.
 
 A recodificação é global e por código: CID-10 raro sobe para a categoria de 3
 caracteres e, se ainda raro, é suprimido; CIAP-2 raro é suprimido, porque o
@@ -231,10 +231,23 @@ catálogo não tem nível intermediário para onde subir. As colunas tratadas
 foram achadas pelas chaves estrangeiras para os catálogos (`tb_cid10`,
 `tb_ciap`, `tb_dim_cid`, `tb_dim_ciap`), excluindo tabelas de referência, mais
 as cópias `ta_`/`tl_`: 54 colunas ao todo. Calculado sobre a base real, dos
-2.752 códigos CID, 765 ficam, 867 sobem para a categoria e 1.120 são
-suprimidos; dos 596 CIAP, 354 ficam e 242 são suprimidos. Isso muda 21.296
-de 1.094.007 linhas com diagnóstico (~2%), mas atinge 25% das pessoas, que
-têm pelo menos um código raro.
+2.752 códigos CID, 871 ficam, 942 sobem para a categoria e 939 são
+suprimidos; dos 596 CIAP, 354 ficam e 242 são suprimidos. Isso muda 20.079
+de 1.094.007 linhas com diagnóstico (~1,8%), mas atinge 23% das pessoas, que
+têm pelo menos um código raro. Das 939 categorias CID de 3 caracteres que
+aparecem nos problemas, 458 têm menos de 5 pessoas e são suprimidas por
+inteiro — entre elas a maioria das neoplasias de localização específica,
+quase todas as malformações congênitas (capítulo Q, incluindo síndrome de
+Down com 3 pessoas), talassemia e doença falciforme (2 cada), fibrose
+cística (3), esclerose múltipla (2) e tuberculose miliar (2).
+
+A primeira versão da regra subia todos os códigos raros de nível ao mesmo
+tempo. Isso suprimia uma categoria quando o próprio código de categoria era
+raro (por exemplo, "S02" usado por 1 pessoa), mesmo que as subcategorias,
+ao subir, completassem k (a categoria S02 tem 76 pessoas). A regra passou a
+subir um nível por vez, do mais específico para o mais geral; a correção
+reduziu os códigos CID suprimidos de 1.120 para 939, sem alterar a
+garantia (todo código publicado continua com pelo menos k pessoas).
 
 A l-diversidade foi medida sobre as classes do núcleo publicado, para oito
 condições sensíveis (HIV/aids, tuberculose, hanseníase, IST, transtorno
@@ -284,7 +297,7 @@ suavização, são o que importa.
 Com k = 5, a antropometria praticamente não muda (KL ≈ 0,001 para peso e
 IMC, 0,002 para altura). A idade em anos muda pouco (KL = 0,038; JS =
 0,012), assim como escolaridade (0,050), estado civil (0,077), raça/cor
-(0,090) e a distribuição sobre os códigos de diagnóstico (0,055). O que
+(0,090) e a distribuição sobre os códigos de diagnóstico (0,051). O que
 muda bastante é a idade em meses abaixo de 5 anos (KL = 0,616; JS = 0,167):
 os blocos de data dos bebês têm cerca de 2 meses, a distribuição mês a mês
 fica cheia de dentes, e 12,5% das crianças com menos de 60 meses na
@@ -418,12 +431,14 @@ gravado: guardar kits com ε diferentes somaria os custos de privacidade.
   medição ad hoc da mesma sessão; não há JSON — reproduzir antes de citar.
 - Tabela de k e variante sem ciclo: `resultados/02_varredura_k_*.json`
   (execução completa mais recente); figuras `04`, `05`, `06`.
-- Diagnósticos (3,2% / 80% / 25%): `02_varredura_k_*.json`; figura `07`.
+- Diagnósticos (3,0% / 80% / 23%): `02_varredura_k_*.json`; figura `07`.
+- Prevalência por código e categoria CID, com o destino de cada código com
+  k = 5: `resultados/cid_prevalencia.csv` (contagens pequenas; apagar no prazo).
 - l-diversidade (k = 5: gestação 5,5% / 48,8%; transtorno mental 0,2% / 34,2%;
   demais 0): `02_varredura_k_20261007_122432.json` (varredura final com
   `pessoas_com_condicao`); figuras `10` e `11`.
 - Antropometria (Wasserstein, correlação 0,844 → 0,852): `02_varredura_k_*.json`.
-- Contagens da migration 16 (2.752 / 596 códigos; 21.296 de 1.094.007 linhas)
+- Contagens da migration 16 (2.752 / 596 códigos; 20.079 de 1.094.007 linhas)
   e da 15 (12.434 pessoas): execuções em modo leitura da sessão; reproduzíveis
   com as funções `decidir` e `calcular` das migrations.
 - Achados de dados (04 só com CPF, 26.902 linhas sem ligação, cópia de

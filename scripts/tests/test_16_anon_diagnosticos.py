@@ -102,3 +102,19 @@ def test_todo_codigo_publicado_tem_k_pessoas(pg_engine):
 
 def test_banco_vazio_nao_falha(pg_engine):
     m.run(pg_engine)
+
+
+def test_categoria_rara_como_codigo_mas_comum_com_as_subcategorias_e_mantida():
+    """O código de categoria usado por poucas pessoas não pode ser suprimido
+    quando as subcategorias raras, ao subir, completam k na categoria."""
+    import pandas as pd
+
+    pessoas = pd.DataFrame(
+        [(1, "CID", "S02")] + [(p, "CID", "S020") for p in range(2, 5)]
+        + [(p, "CID", "S021") for p in range(5, 8)],
+        columns=["id", "sistema", "codigo"],
+    )
+    destino = m.decidir(pessoas, pd.DataFrame(columns=["sistema", "codigo", "linhas"]))
+    assert destino[("CID", "S02")] == "S02"
+    assert destino[("CID", "S020")] == "S02"
+    assert destino[("CID", "S021")] == "S02"
