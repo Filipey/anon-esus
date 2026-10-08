@@ -1,8 +1,8 @@
 """Experimento 04 - figuras dos resultados e decisões (para reunião e texto).
 
-Lê os JSON mais recentes de `00_quase_identificadores`, `02_varredura_k` e
-`03_varredura_epsilon` e grava PDF + PNG em `figuras/`. Só agregado: nenhuma
-figura toca o banco.
+Lê os JSON mais recentes de `00_quase_identificadores`, `02_varredura_k`,
+`03_varredura_epsilon`, `05_distribuicoes` e `06_cid_raros` e grava PDF + PNG
+em `figuras/`. Só agregado: nenhuma figura toca o banco.
 
 Estilo: serifa no estilo LaTeX como as demais figuras do projeto; cores da
 paleta de referência do guia de visualização (azul, laranja, verde-água,
@@ -93,6 +93,42 @@ def barras_h(ax, rotulos, valores, cores, fmt="{:.1f}%") -> None:
     ax.invert_yaxis()
     ax.grid(axis="y", visible=False)
     ax.tick_params(axis="y", length=0)
+
+
+# ------------------------------------------------------------ 06
+def fig_ecdf_cid(d06: dict) -> None:
+    """ECDF das ocorrências e das pessoas por CID na base original, no código
+    como registrado e na categoria (3 caracteres)."""
+    import numpy as np
+    fig, axes = plt.subplots(1, 2, figsize=(9, 3.6), sharey=True)
+    paineis = [("ocorrencias", "Ocorrências por CID", "ocorrências (escala log)"),
+               ("pessoas", "Pessoas por CID", "pessoas distintas (escala log)")]
+    niveis = [("por_codigo", "código"), ("por_categoria", "categoria (3 caracteres)")]
+    for ax, (campo, titulo, rotulo_x) in zip(axes, paineis):
+        for i, (chave, nome) in enumerate(niveis):
+            v = np.sort(np.array([r[campo] for r in d06[chave]]))
+            y = np.arange(1, len(v) + 1) / len(v) * 100
+            ax.step(v, y, where="post", color=SERIES[i], label=f"{nome} (n = {len(v)})", zorder=3)
+            # rótulo direto: fração com 1 e com menos de 5
+            # (x = 1: à direita; x = 4: azul acima à esquerda, laranja abaixo à direita)
+            for x, dx, dy, ha in ((1, 5, 3 if i else -3, "left"),
+                                  (4, 5 if i else -5, -4 if i else 4, "left" if i else "right")):
+                f = 100 * (v <= x).mean()
+                ax.plot([x], [f], "o", color=SERIES[i], ms=4.5, mec="white", mew=1, zorder=4)
+                ax.annotate(f"{f:.0f}%", (x, f), xytext=(dx, dy), textcoords="offset points", fontsize=7.6,
+                            color=TEXTO, ha=ha, va="top" if dy < 0 else "bottom")
+        ax.set_xscale("log")
+        ax.set_xlabel(rotulo_x)
+        ax.set_title(titulo, fontsize=9.5, pad=8)
+        ax.set_ylim(0, 102)
+        pct(ax, "y")
+    linha_k(axes[1], k=5, rotulo="k = 5")
+    axes[0].set_ylabel("dos CIDs com valor $\\leq x$")
+    legenda(axes[1], loc="lower right")
+    fig.suptitle("Distribuição acumulada (ECDF) das ocorrências por CID na base original",
+                 x=0.01, ha="left", fontsize=10.5, weight="bold", color=TEXTO, y=0.99)
+    fig.tight_layout()
+    salvar(fig, "16_ecdf_ocorrencias_cid")
 
 
 # ------------------------------------------------------------ 00
@@ -583,6 +619,7 @@ def main() -> None:
     d02 = ler("02_varredura_k")
     d03 = ler("03_varredura_epsilon")
     d05 = ler("05_distribuicoes")
+    d06 = ler("06_cid_raros")
     fig_metodologia()
     fig_escada(d00)
     fig_tira_um(d00)
@@ -599,6 +636,7 @@ def main() -> None:
     fig_kl_por_k(d05)
     fig_epsilon(d03)
     fig_ruido_raras(d03)
+    fig_ecdf_cid(d06)
 
 
 if __name__ == "__main__":
