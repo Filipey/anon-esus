@@ -51,7 +51,14 @@ def _build_url(database: str | None = None) -> URL:
 
 def create_db_engine(database: str | None = None, **kwargs) -> Engine:
     """Cria um novo engine, por padrão no banco `DB_NAME`. Útil para testes,
-    conexões isoladas ou para abrir uma versão específica da base."""
+    conexões isoladas ou para abrir uma versão específica da base.
+
+    `executemany_mode="values_plus_batch"`: um `conn.execute(text(...), lista)`
+    vira `execute_batch` do psycopg2, com mil linhas por ida ao servidor. No
+    padrão é uma ida por linha, e pelo túnel a tabela de ~100 mil nomes da
+    migration 09 levou mais de 1 h até a conexão cair."""
+    kwargs.setdefault("executemany_mode", "values_plus_batch")
+    kwargs.setdefault("executemany_batch_page_size", 1000)
     return create_engine(
         _build_url(database), future=True, connect_args={"client_encoding": "utf8"}, **kwargs
     )

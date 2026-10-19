@@ -24,7 +24,9 @@ os.environ["ANON_SEGREDO"] = "segredo-de-teste-" + "0" * 32
 def pg_engine() -> Engine:
     """Engine apontando para um Postgres efêmero, novo a cada teste."""
     with testing.postgresql.Postgresql() as postgresql:
-        engine = create_engine(postgresql.url(), future=True)
+        # mesmo modo de executemany do engine real (scripts/00_connect_db.py)
+        engine = create_engine(postgresql.url(), future=True, executemany_mode="values_plus_batch",
+                               executemany_batch_page_size=1000)
         try:
             yield engine
         finally:
