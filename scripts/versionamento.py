@@ -167,12 +167,16 @@ def _env_pg() -> dict:
 
 def dump(banco: str, nome: str) -> Path:
     """`pg_dump -Fc` de `banco` para `versoes/<nome>.dump`. Grava num
-    temporário e renomeia, para um dump interrompido nunca parecer válido."""
+    temporário e renomeia, para um dump interrompido nunca parecer válido.
+
+    Compressão zstd nível 1: o gzip padrão comprime num núcleo só e era o
+    gargalo do dump (~5 min por versão); o zstd:1 comprime parecido muito
+    mais rápido. Exige pg_dump/pg_restore >= 16 na máquina local."""
     DIR_VERSOES.mkdir(parents=True, exist_ok=True)
     destino = caminho_dump(nome)
     tmp = destino.with_suffix(".dump.parcial")
     r = subprocess.run(
-        ["pg_dump", "-Fc", "-d", banco, "-f", str(tmp)],
+        ["pg_dump", "-Fc", "-Z", "zstd:1", "-d", banco, "-f", str(tmp)],
         env=_env_pg(), capture_output=True, text=True,
     )
     if r.returncode != 0:

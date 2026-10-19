@@ -135,6 +135,7 @@ pipeline (a versão do cliente pode ser mais nova que a do servidor).
 ```bash
 python pipeline.py                     # cria/retoma a cadeia de versões
 python pipeline.py --a-partir-de 6     # refaz a versão 06 e as seguintes
+python pipeline.py --sem-testes --sem-auditoria   # mais rápido: sem teste prévio nem foto de auditoria
 python pipeline.py --listar            # versões gravadas e estado do banco de trabalho
 python pipeline.py --restaurar 5       # restaura a v05 no banco de trabalho (para o PEC)
 python pipeline.py --restaurar 5 --banco esus_v05   # ... ou num banco à parte

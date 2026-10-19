@@ -31,9 +31,13 @@ A pipeline para na primeira migration cujo teste ou aplicação falhe. Como
 a migration é atômica, o banco de trabalho continua na versão anterior, e a
 próxima execução retoma dali.
 
-**PIPELINE_SKIP_TESTS=1**: pula a etapa de teste (Postgres efêmero).
-Existe só para destravar quando não há `initdb` disponível na máquina.
-Desligado por padrão; precisa ser setado explicitamente a cada execução.
+**--sem-testes** (ou PIPELINE_SKIP_TESTS=1): pula a etapa de teste
+(Postgres efêmero), para gerar as versões mais rápido quando os testes já
+foram rodados à parte. Desligado por padrão; precisa ser pedido a cada
+execução.
+
+**--sem-auditoria**: pula a foto de auditoria antes/depois de cada versão
+(a procedência registra que não houve relatório).
 
 Auditoria: para cada versão, `scripts/pipeline_report.py` tira uma "foto"
 (linhas totais, não-nulos, checksum agregado) das colunas/tabelas
@@ -44,6 +48,7 @@ real. O caminho do relatório fica registrado na procedência da versão.
 Uso:
     python pipeline.py                     # cria/retoma a cadeia de versões
     python pipeline.py --a-partir-de 6     # refaz da versão 06 em diante
+    python pipeline.py --sem-testes --sem-auditoria   # mais rápido
     python pipeline.py --listar            # versões gravadas e estado do banco de trabalho
     python pipeline.py --restaurar 5       # restaura a v05 no banco de trabalho (para o PEC)
     python pipeline.py --restaurar 5 --banco esus_v05   # ... ou num banco à parte
@@ -56,6 +61,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
@@ -68,6 +74,7 @@ TESTS_DIR = SCRIPTS_DIR / "tests"
 CONNECT_MODULE = "00_connect_db.py"
 REPORT_MODULE = "pipeline_report.py"
 SKIP_TESTS = os.getenv("PIPELINE_SKIP_TESTS") == "1"
+SKIP_AUDIT = False
 
 # `scripts/` no path para que pipeline_logging (e as migrations) importem.
 if str(SCRIPTS_DIR) not in sys.path:
@@ -154,6 +161,27 @@ def _sem_paralelismo(engine):
     return engine
 
 
+def _vacuum_sujas(engine) -> None:
+    """VACUUM só das tabelas com tupla morta, em vez do banco inteiro.
+
+    O VACUUM do banco todo varre toda tabela de um banco recém-restaurado
+    (o mapa de visibilidade vem vazio do restore): na v05 passou de 2 h e a
+    conexão caiu. As estatísticas de tupla morta de cada sessão só são
+    publicadas quando ela fica ociosa ou termina, então as conexões da
+    migration são fechadas antes da consulta.
+    """
+    engine.dispose()
+    time.sleep(2)
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as c:
+        sujas = c.exec_driver_sql(
+            "SELECT format('%I.%I', schemaname, relname), n_dead_tup FROM pg_stat_user_tables "
+            "WHERE n_dead_tup > 0 ORDER BY n_dead_tup DESC"
+        ).all()
+        log.info("VACUUM em %d tabela(s) com tupla morta (%d tuplas).", len(sujas), sum(n for _, n in sujas))
+        for tabela, _ in sujas:
+            c.exec_driver_sql(f"VACUUM (PARALLEL 0) {tabela}")
+
+
 def _versao_valida(nome: str, cadeia_esperada: list[dict]) -> bool:
     meta = v.ler_meta_dump(nome)
     return meta is not None and meta.get("cadeia") == cadeia_esperada
@@ -226,7 +254,7 @@ def _run_pipeline(migrations: list[Path], connect, admin, log_file: Path, a_part
 
             # 1) Testar antes de aplicar (a menos que SKIP_TESTS esteja ativo).
             if SKIP_TESTS:
-                log.warning("[teste] PULADO (PIPELINE_SKIP_TESTS=1) — %s sem validação prévia.", path.name)
+                log.warning("[teste] PULADO (--sem-testes) — %s sem validação prévia.", path.name)
             else:
                 test_path = _test_path_for(path)
                 if not test_path.exists():
@@ -245,7 +273,7 @@ def _run_pipeline(migrations: list[Path], connect, admin, log_file: Path, a_part
 
             # 2) Aplicar no banco de trabalho.
             started_at = datetime.now(timezone.utc)
-            if foto_anterior is None:
+            if foto_anterior is None and not SKIP_AUDIT:
                 log.info("tirando foto de auditoria antes da migration...")
                 foto_anterior = report_module.build_snapshot(engine)
             # A partir daqui o banco deixa de ser a versão anterior. Se algo
@@ -267,14 +295,17 @@ def _run_pipeline(migrations: list[Path], connect, admin, log_file: Path, a_part
             # reuso antes da próxima etapa (o disco do servidor é justo).
             # PARALLEL 0: o vacuum paralelo de índice pede segmento de memória
             # compartilhada, e o /dev/shm do container tem só 64 MB.
-            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as c:
-                c.exec_driver_sql("VACUUM (PARALLEL 0)")
+            _vacuum_sujas(engine)
 
-            relatorio = log_file.with_name(f"{log_file.stem}_v{numero:02d}_auditoria.json")
-            foto_anterior = _audit(report_module, engine, foto_anterior, started_at, relatorio)
+            if SKIP_AUDIT:
+                relatorio = None
+            else:
+                relatorio = log_file.with_name(f"{log_file.stem}_v{numero:02d}_auditoria.json")
+                foto_anterior = _audit(report_module, engine, foto_anterior, started_at, relatorio)
 
             # 3) Gravar a versão: dump local + procedência, e marcar o banco.
             meta = v.meta_versao(numero, nome, v.cadeia(migrations[:i]), anterior, relatorio)
+            meta["testada"] = not SKIP_TESTS
             log.info("gravando dump %s...", v.caminho_dump(nome))
             v.dump(v.BANCO_TRABALHO, nome)
             v.gravar_meta_dump(nome, meta)
@@ -326,9 +357,16 @@ def main() -> int:
     ap.add_argument("--listar", action="store_true", help="lista as versões gravadas e sai")
     ap.add_argument("--restaurar", type=int, metavar="NN",
                     help="restaura a versão NN num banco do servidor e sai")
+    ap.add_argument("--sem-testes", action="store_true",
+                    help="não roda o teste de cada migration antes de aplicá-la")
+    ap.add_argument("--sem-auditoria", action="store_true",
+                    help="não tira a foto de auditoria antes/depois de cada versão")
     ap.add_argument("--banco", default=None,
                     help=f"banco de destino do --restaurar (padrão: {v.BANCO_TRABALHO})")
     args = ap.parse_args()
+    global SKIP_TESTS, SKIP_AUDIT
+    SKIP_TESTS = SKIP_TESTS or args.sem_testes
+    SKIP_AUDIT = args.sem_auditoria
 
     try:
         connect = _load_module(SCRIPTS_DIR / CONNECT_MODULE)
@@ -347,7 +385,9 @@ def main() -> int:
 
         log.info("=== Pipeline de migrations (versões incrementais) ===")
         if SKIP_TESTS:
-            log.warning("=== PIPELINE_SKIP_TESTS=1: rodando SEM validação prévia. ===")
+            log.warning("=== sem testes: rodando SEM validação prévia. ===")
+        if SKIP_AUDIT:
+            log.warning("=== sem auditoria: nenhuma foto antes/depois será gravada. ===")
         migrations = _discover_migrations()
         if not migrations:
             log.info("Nenhuma migration encontrada.")
