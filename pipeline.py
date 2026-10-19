@@ -174,7 +174,8 @@ def _vacuum_sujas(engine) -> None:
     time.sleep(2)
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as c:
         sujas = c.exec_driver_sql(
-            "SELECT format('%I.%I', schemaname, relname), n_dead_tup FROM pg_stat_user_tables "
+            # quote_ident em vez de format('%I...'): o psycopg2 lê '%' como parâmetro.
+            "SELECT quote_ident(schemaname) || '.' || quote_ident(relname), n_dead_tup FROM pg_stat_user_tables "
             "WHERE n_dead_tup > 0 ORDER BY n_dead_tup DESC"
         ).all()
         log.info("VACUUM em %d tabela(s) com tupla morta (%d tuplas).", len(sujas), sum(n for _, n in sujas))
