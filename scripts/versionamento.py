@@ -207,6 +207,8 @@ def conexoes_abertas(admin: Engine, nome: str) -> list[dict]:
                 SELECT pid, usename, application_name, client_addr::text, state, backend_start
                 FROM pg_stat_activity
                 WHERE datname = :n AND pid <> pg_backend_pid()
+                  -- o DROP DATABASE encerra o autovacuum sozinho; não é alguém conectado
+                  AND backend_type <> 'autovacuum worker'
                 ORDER BY backend_start
                 """
             ),
