@@ -13,3 +13,10 @@ testing.postgresql
 matplotlib
 seaborn
 pandas
+
+# análises de texto livre da fase 2 (scripts/fase-02/texto-livre/07-14)
+# + python -m spacy download pt_core_news_md
+spacy
+lftk
+liwc
+detoxify

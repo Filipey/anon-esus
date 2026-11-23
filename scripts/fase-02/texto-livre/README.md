@@ -5,8 +5,9 @@ a anonimização por NER (ver `GUIDELINE.md`, linha "Textos livres"). Nada
 aqui roda pela pipeline e nada escreve no banco: a conexão é read-only no
 próprio Postgres.
 
-> **`resultados/` contém texto clínico real** (script 02) e está no
-> `.gitignore`. Não copie trechos de lá para documento versionado.
+> **`resultados/` contém texto clínico real** (script 02 e os arquivos de
+> verificação da 04) e está no `.gitignore`. Não copie trechos de lá para
+> documento versionado.
 
 ## Scripts
 
@@ -32,6 +33,74 @@ Opções úteis: `01`/`02 --grupos clinico nome ...` escolhe os grupos (padrão:
 só `clinico`); `01 --incluir-curto` estende a caracterização às colunas
 `curto`; `02 --colunas tb_x.ds_y ...` restringe os exemplos;
 `02 --amostra N --por-estrato K` controla o tamanho.
+
+## Exportação pseudo-anonimizada (04-06)
+
+Texto para os parceiros: receitas, atestados e SOAP com o texto livre
+pseudo-anonimizado (`_anon_texto.py`: unidade, município, CPF, CNS, conselho,
+telefone, nomes com substituto do mesmo sexo, datas deslocadas por paciente,
+idade >= 90). Os três arquivos de uma rodada compartilham `paciente_id`,
+deslocamento de data e nomes fictícios; ligam-se pelo `atendimento_prof_id`.
+
+```bash
+python 04_exporta.py resultados                       # banco -> 04_receitas_medicamento, 05_atestados, 06_soap (+ verificação)
+python 05_sem_html.py resultados/06_soap.csv resultados/06_soap_sem_html.csv
+python 05_sem_html.py resultados/05_atestados.csv resultados/05_atestados_sem_html.csv
+python 06_junta.py resultados --sem-html              # -> 07_receitas_com_contexto_sem_html.csv (uma linha por receita)
+```
+
+Os `*_verificacao.csv` e `*_residuo.txt` têm o texto original: só para
+conferência local, nunca para envio. O prefixo numérico dos CSVs é nome de
+arquivo (já entregue aos parceiros), não a etapa que o gera.
+
+## Análises linguísticas (07-14)
+
+Leem os CSVs sem HTML da etapa anterior (não o banco) e gravam em
+`resultados/<análise>_<ts>/` tabelas CSV e figuras PDF + PNG. Campos: os
+quatro do SOAP, a recomendação da receita e o texto do atestado
+(`_corpus.CAMPOS`); `--campos` escolhe, `--distintos` tira texto repetido.
+
+```bash
+python 07_tamanho.py             # # caracteres e # palavras por texto
+python 08_vocabulario.py         # palavras únicas: vocabulário, hapax, TTR, Zipf
+python 09_ngramas.py             # unigramas, bigramas e trigramas (sem stopword)
+python 10_recusa_negacao.py      # combinações com recusar, rejeitar e negar (todas as formas)
+python 11_participios.py         # palavras em -ado, -ada, -ados, -adas
+python 12_liwc.py --dic LIWC.dic # categorias do LIWC (dicionário não versionado)
+python 13_lftk.py                # atributos "general" do LFTK (amostra de 10 mil por campo)
+python 14_detoxify.py            # toxicidade (Detoxify multilíngue, GPU se houver)
+```
+
+Dependências além do `requirements.txt` base: `pip install spacy lftk liwc
+detoxify` e `python -m spacy download pt_core_news_md`; o Detoxify baixa o
+modelo (~1 GB) no primeiro uso.
+
+Figuras: só 6x4 ou 4x3 polegadas (`_corpus.figura`), serifa Computer Modern
+sem precisar de LaTeX (CMU Serif se instalada, senão DejaVu Serif; a `cmr10`
+do matplotlib não tem acento), sem título (a legenda fica no LaTeX), eixo de
+quantidade como "# itens", número com separador de milhar "." e uma cor fixa
+por campo em todas as figuras.
+
+Decisões que mudam o resultado:
+
+- Token = sequência de letras; hífen separa ("recusa-se" -> "recusa se").
+  N-grama e contexto não atravessam fim de frase nem o " | " de bloco.
+- Stopword = lista do spaCy **menos a negação** (não, nem, nunca, sem,
+  nada...): em texto clínico ela carrega o sentido ("sem febre").
+- `10`: o lema vem de lista explícita de flexões (radical + desinência), não
+  do lematizador do spaCy, que toma "Nega" no início da frase por nome
+  próprio. "Negativo/negativa" fica de fora.
+- `11`: palavra de 5+ letras; substantivo frequente com a mesma terminação
+  (pomada, fígado, cunhada, resultado...) fica no CSV marcado e sai das
+  figuras.
+- `13`: só atributos sem dependência de idioma (legibilidade e dificuldade
+  de palavra do LFTK são do inglês); texto quase todo em maiúscula vai para
+  minúscula antes do spaCy, senão vira nome próprio.
+- `14`: o Detoxify foi treinado em comentário de internet. Caixa alta conta
+  como "grito" ("PARASITOSE INTESTINAL" = 0,99; em minúscula, 0,01), então o
+  texto vai para minúscula antes de pontuar; termo anatômico de exame
+  ("prurido anal", "pênis") continua saindo tóxico/sexual. Conferir
+  `detoxify_mais_altos.csv` antes de interpretar.
 
 ## Grupos de texto livre
 
