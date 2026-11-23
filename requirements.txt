@@ -21,3 +21,10 @@ numpy
 # e modelo gráfico do private-pgm (traz o JAX)
 opendp
 mbi @ git+https://github.com/ryan112358/private-pgm.git
+
+# análises de texto livre da fase 2 (scripts/fase-02/texto-livre/07-14)
+# + python -m spacy download pt_core_news_md
+spacy
+lftk
+liwc
+detoxify
